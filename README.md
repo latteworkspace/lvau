@@ -2,6 +2,7 @@
   <h1>☕ Lvau</h1>
   <p><strong>A modern, highly secure, and accessible file encryption toolkit.</strong></p>
   <p><i>"Cryptography should be standard, robust, and boring. Obfuscation is secondary. UX prevents mistakes."</i></p>
+  <p>English | <a href="README_ja.md">日本語 (Japanese)</a></p>
 </div>
 
 ---
