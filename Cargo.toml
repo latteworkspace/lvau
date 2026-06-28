@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/lvau-protocol",
+    "crates/lvau-core",
+    "crates/lvau-cli",
+    "crates/lvau-gui",
+    "crates/lvau-stub"
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+overflow-checks = false
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
