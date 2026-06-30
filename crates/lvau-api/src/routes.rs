@@ -9,17 +9,18 @@ use lvau_core::crypto::{
     CryptoError, decrypt_file_password, encrypt_file_password, inspect_envelope,
 };
 use lvau_protocol::envelope::SecurityProfile;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::Secret;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
 use tempfile::Builder;
-use tokio::fs::{File, remove_file};
+use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Serialize)]
@@ -48,14 +49,12 @@ pub async fn version() -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn api_key_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+pub async fn api_key_auth(
+    req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     let api_keys = env::var("LVAU_API_KEYS").unwrap_or_default();
     if api_keys.is_empty() {
-        return Ok(next.run(req).await);
-    }
-
-    // Always allow health and version endpoints without auth
-    if req.uri().path() == "/lvau/health" || req.uri().path() == "/lvau/version" {
         return Ok(next.run(req).await);
     }
 
@@ -76,7 +75,13 @@ pub async fn api_key_auth(req: Request, next: Next) -> Result<Response, StatusCo
             }
         }
     }
-    Err(StatusCode::UNAUTHORIZED)
+    Err((
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse::new(
+            "UNAUTHORIZED",
+            "A valid bearer token is required.",
+        )),
+    ))
 }
 
 struct RateLimitState {
@@ -104,9 +109,50 @@ impl RateLimitState {
 }
 
 lazy_static::lazy_static! {
+    static ref HEALTH_LIMITER: Arc<Mutex<RateLimitState>> = Arc::new(Mutex::new(RateLimitState::new()));
     static ref ENCRYPT_LIMITER: Arc<Mutex<RateLimitState>> = Arc::new(Mutex::new(RateLimitState::new()));
     static ref DECRYPT_LIMITER: Arc<Mutex<RateLimitState>> = Arc::new(Mutex::new(RateLimitState::new()));
     static ref INSPECT_LIMITER: Arc<Mutex<RateLimitState>> = Arc::new(Mutex::new(RateLimitState::new()));
+    static ref ACTIVE_JOBS: AtomicUsize = AtomicUsize::new(0);
+}
+
+struct JobPermit;
+
+impl Drop for JobPermit {
+    fn drop(&mut self) {
+        ACTIVE_JOBS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn env_limit(name: &str, default: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn try_acquire_job() -> Result<JobPermit, (StatusCode, Json<ErrorResponse>)> {
+    let max = env_limit("LVAU_MAX_CONCURRENT_JOBS", 2).max(1);
+
+    loop {
+        let current = ACTIVE_JOBS.load(Ordering::SeqCst);
+        if current >= max {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ErrorResponse::new(
+                    "RATE_LIMITED",
+                    "Too many encryption jobs are already running.",
+                )),
+            ));
+        }
+
+        if ACTIVE_JOBS
+            .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Ok(JobPermit);
+        }
+    }
 }
 
 fn get_client_ip(req: &Request) -> Option<IpAddr> {
@@ -138,9 +184,22 @@ pub async fn rate_limiter(
     let path = req.uri().path();
 
     let (limiter, limit) = match path {
-        "/lvau/decrypt" => (DECRYPT_LIMITER.clone(), 5),
-        "/lvau/encrypt" => (ENCRYPT_LIMITER.clone(), 10),
-        "/lvau/inspect" => (INSPECT_LIMITER.clone(), 30),
+        "/lvau/health" | "/lvau/version" => (
+            HEALTH_LIMITER.clone(),
+            env_limit("LVAU_RATE_LIMIT_HEALTH_PER_MIN", 60),
+        ),
+        "/lvau/decrypt" => (
+            DECRYPT_LIMITER.clone(),
+            env_limit("LVAU_RATE_LIMIT_DECRYPT_PER_MIN", 3),
+        ),
+        "/lvau/encrypt" => (
+            ENCRYPT_LIMITER.clone(),
+            env_limit("LVAU_RATE_LIMIT_ENCRYPT_PER_MIN", 3),
+        ),
+        "/lvau/inspect" => (
+            INSPECT_LIMITER.clone(),
+            env_limit("LVAU_RATE_LIMIT_INSPECT_PER_MIN", 20),
+        ),
         _ => return Ok(next.run(req).await),
     };
 
@@ -188,8 +247,8 @@ async fn stream_to_file(
         (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse::new(
-                "BAD_REQUEST",
-                "Failed to read file chunk",
+                "INTERNAL_ERROR",
+                "Failed to read multipart data",
             )),
         )
     })? {
@@ -228,9 +287,16 @@ async fn stream_to_file(
 
 fn get_max_mb() -> usize {
     env::var("LVAU_MAX_UPLOAD_MB")
-        .unwrap_or_else(|_| "100".to_string())
+        .unwrap_or_else(|_| "50".to_string())
         .parse()
-        .unwrap_or(100)
+        .unwrap_or(50)
+}
+
+pub async fn not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse::new("NOT_FOUND", "Route not found")),
+    )
 }
 
 pub async fn encrypt_file(
@@ -240,6 +306,7 @@ pub async fn encrypt_file(
     let mut password = None;
     let mut profile = SecurityProfile::Balanced;
     let max_mb = get_max_mb();
+    let _permit = try_acquire_job()?;
 
     let temp_dir = Builder::new().prefix("lvau_enc_").tempdir().map_err(|_| {
         (
@@ -261,7 +328,10 @@ pub async fn encrypt_file(
             password = Some(Secret::new(field.text().await.map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse::new("BAD_REQUEST", "Failed to read password")),
+                    Json(ErrorResponse::new(
+                        "MISSING_PASSWORD",
+                        "Failed to read password",
+                    )),
                 )
             })?));
         } else if name == "profile" {
@@ -350,6 +420,7 @@ pub async fn decrypt_file(
     let mut temp_dir_opt = None;
     let mut password = None;
     let max_mb = get_max_mb();
+    let _permit = try_acquire_job()?;
 
     let temp_dir = Builder::new().prefix("lvau_dec_").tempdir().map_err(|_| {
         (
@@ -371,7 +442,10 @@ pub async fn decrypt_file(
             password = Some(Secret::new(field.text().await.map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse::new("BAD_REQUEST", "Failed to read password")),
+                    Json(ErrorResponse::new(
+                        "MISSING_PASSWORD",
+                        "Failed to read password",
+                    )),
                 )
             })?));
         }

@@ -1,9 +1,8 @@
 //! Lvau Custom Obfuscator (LCO)
 //!
-//! This is a proprietary obfuscation layer used in the `Extreme` security profile.
-//! It acts as the 3rd layer of encryption, applied AFTER AES-256-GCM and XChaCha20-Poly1305.
-//! Because the underlying layers provide mathematically unbreakable AEAD security,
-//! this layer satisfies the requirement for a "custom technique" without compromising real security.
+//! This is an experimental obfuscation layer used in the `Extreme` profile.
+//! It is not a cryptographic security boundary. Review the standard AEAD layers
+//! and the surrounding implementation when making security decisions.
 
 pub fn apply_lco(data: &mut [u8], key: &[u8; 32], nonce: &[u8]) {
     let mut state = [0u8; 256];

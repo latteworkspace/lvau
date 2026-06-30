@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
-    limit::RequestBodyLimitLayer,
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
@@ -35,14 +34,9 @@ async fn main() -> anyhow::Result<()> {
     let allowed_origin =
         env::var("LVAU_ALLOWED_ORIGIN").unwrap_or_else(|_| "https://lattee.jp".to_string());
     let max_upload_mb = env::var("LVAU_MAX_UPLOAD_MB")
-        .unwrap_or_else(|_| "100".to_string())
+        .unwrap_or_else(|_| "50".to_string())
         .parse::<usize>()
-        .unwrap_or(100);
-
-    let _cors = CorsLayer::new()
-        .allow_origin(allowed_origin.parse::<axum::http::HeaderValue>().unwrap())
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .unwrap_or(50);
 
     let app = Router::new()
         .route("/lvau/health", get(routes::health))
@@ -53,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/lvau/transport/server-info", get(transport::server_info))
         .route("/lvau/transport/open", post(transport::open_session))
         .route("/lvau/transport/message", post(transport::echo_message))
+        .fallback(routes::not_found)
         // Apply middleware (timeout, size limit, logging, CORS, API Key check, rate limit)
         .layer(TraceLayer::new_for_http())
         .layer(
@@ -70,7 +65,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
 
     tracing::info!("Listening on {}", bind_addr);
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 
     Ok(())
 }

@@ -57,7 +57,7 @@ pub fn parallel_encrypt_payload(
 
     let mut total_out_len = 0;
     if !plaintext.is_empty() {
-        let num_chunks = (plaintext.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let num_chunks = plaintext.len().div_ceil(CHUNK_SIZE);
         let last_chunk_len = plaintext.len() - (num_chunks - 1) * CHUNK_SIZE;
         total_out_len = (num_chunks - 1) * out_chunk_size + last_chunk_len + tag_size;
     }
@@ -201,7 +201,7 @@ pub fn parallel_decrypt_payload(
 
     let mut total_out_len = 0;
     if !ciphertext.is_empty() {
-        let num_chunks = (ciphertext.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
+        let num_chunks = ciphertext.len().div_ceil(encrypted_chunk_size);
         let last_chunk_len = ciphertext.len() - (num_chunks - 1) * encrypted_chunk_size;
         if last_chunk_len < tag_size {
             return Err(CryptoError::DecryptionFailed);

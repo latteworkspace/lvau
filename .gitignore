@@ -17,6 +17,7 @@ release_binaries/
 *.lvau-pub
 *.tmp.lvau
 .gemini/
+frontend/
 
 # Test artifacts
 *.txt

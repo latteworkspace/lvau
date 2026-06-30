@@ -1,0 +1,56 @@
+name: Deploy Lvau API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/lvau-api/**"
+      - "crates/lvau-core/**"
+      - "crates/lvau-protocol/**"
+      - "scripts/deploy_oracle_lvau_api.sh"
+      - ".github/workflows/deploy-lvau-api.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      ORACLE_PORT: ${{ secrets.ORACLE_PORT || 22 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build lvau-api
+        run: cargo build --release -p lvau-api
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/oracle_key
+          printf '%s\n' "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle_key
+          ssh-keyscan -p "$ORACLE_PORT" "${{ secrets.ORACLE_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Detect Oracle architecture
+        run: |
+          ssh -i ~/.ssh/oracle_key -p "$ORACLE_PORT" "${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }}" 'uname -m'
+
+      - name: Upload binary and deploy script
+        run: |
+          scp -i ~/.ssh/oracle_key -P "$ORACLE_PORT" target/release/lvau-api "${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }}:/tmp/lvau-api"
+          scp -i ~/.ssh/oracle_key -P "$ORACLE_PORT" scripts/deploy_oracle_lvau_api.sh "${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }}:/tmp/deploy_oracle_lvau_api.sh"
+
+      - name: Restart on Oracle with rollback
+        env:
+          LVAU_ALLOWED_ORIGIN: ${{ secrets.LVAU_ALLOWED_ORIGIN }}
+          LVAU_MAX_UPLOAD_MB: ${{ secrets.LVAU_MAX_UPLOAD_MB }}
+          LVAU_MAX_CONCURRENT_JOBS: ${{ secrets.LVAU_MAX_CONCURRENT_JOBS }}
+          LVAU_API_KEYS: ${{ secrets.LVAU_API_KEYS }}
+        run: |
+          ssh -i ~/.ssh/oracle_key -p "$ORACLE_PORT" "${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }}" \
+            "chmod +x /tmp/deploy_oracle_lvau_api.sh && sudo -E /tmp/deploy_oracle_lvau_api.sh /tmp/lvau-api"

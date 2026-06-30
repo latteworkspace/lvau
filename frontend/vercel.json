@@ -1,8 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/api/lvau/:path*",
-      "destination": "https://api.lattee.jp/lvau/:path*"
+      "source": "/toolbox",
+      "destination": "/index.html"
     },
     {
       "source": "/lvau",
@@ -17,8 +17,8 @@
       "destination": "/index.html"
     },
     {
-      "source": "/toolbox",
-      "destination": "/index.html"
+      "source": "/api/lvau/:path*",
+      "destination": "https://api.lattee.jp/lvau/:path*"
     }
   ]
 }
