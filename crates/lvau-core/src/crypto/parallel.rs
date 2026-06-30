@@ -1,11 +1,14 @@
-use rayon::prelude::*;
+use aes_gcm::{Aes256Gcm, Nonce as AesNonce};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 use hkdf::Hkdf;
+use rayon::prelude::*;
 use sha2::Sha256;
 use zeroize::Zeroizing;
-use chacha20poly1305::{XChaCha20Poly1305, XNonce, aead::{Aead, KeyInit, Payload}};
-use aes_gcm::{Aes256Gcm, Nonce as AesNonce};
 
-use super::{AlgorithmId, CryptoError, lco};
+use super::{lco, AlgorithmId, CryptoError};
 
 pub const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
 
@@ -37,71 +40,118 @@ pub fn parallel_encrypt_payload(
         }
         AlgorithmId::CascadeAesGcmXChaCha => {
             hk.expand(b"Lvau-Cascade-AES", &mut *key_aes).unwrap();
-            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha).unwrap();
+            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha)
+                .unwrap();
         }
         AlgorithmId::TripleCascadeAesXChaChaLco => {
             hk.expand(b"Lvau-Cascade-AES", &mut *key_aes).unwrap();
-            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha).unwrap();
+            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha)
+                .unwrap();
             hk.expand(b"Lvau-Cascade-LCO", &mut *key_lco).unwrap();
         }
         _ => return Err(CryptoError::UnsupportedProfile),
     }
 
-    let chunks: Result<Vec<Vec<u8>>, CryptoError> = plaintext.par_chunks(CHUNK_SIZE).enumerate().map(|(idx, chunk)| {
-        let mut chunk_nonce = *nonce_bytes;
-        let idx_bytes = (idx as u32).to_le_bytes();
-        for i in 0..4 {
-            chunk_nonce[i] ^= idx_bytes[i];
-        }
-
-        match algorithm {
-            AlgorithmId::XChaCha20Poly1305 => {
-                let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
-                let nonce = XNonce::from(chunk_nonce);
-                cipher.encrypt(&nonce, Payload { msg: chunk, aad: aad_hash })
-                    .map_err(|_| CryptoError::EncryptionFailed)
+    let chunks: Result<Vec<Vec<u8>>, CryptoError> = plaintext
+        .par_chunks(CHUNK_SIZE)
+        .enumerate()
+        .map(|(idx, chunk)| {
+            let mut chunk_nonce = *nonce_bytes;
+            let idx_bytes = (idx as u32).to_le_bytes();
+            for i in 0..4 {
+                chunk_nonce[i] ^= idx_bytes[i];
             }
-            AlgorithmId::CascadeAesGcmXChaCha => {
-                let sn_bytes = secondary_nonce_bytes.unwrap();
-                let mut chunk_sn = sn_bytes;
-                for i in 0..4 { chunk_sn[i] ^= idx_bytes[i]; }
 
-                let aes_nonce = AesNonce::from(chunk_sn);
-                let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
-                let c1 = aes_cipher.encrypt(&aes_nonce, Payload { msg: chunk, aad: aad_hash })
-                    .map_err(|_| CryptoError::EncryptionFailed)?;
+            match algorithm {
+                AlgorithmId::XChaCha20Poly1305 => {
+                    let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
+                    let nonce = XNonce::from(chunk_nonce);
+                    cipher
+                        .encrypt(
+                            &nonce,
+                            Payload {
+                                msg: chunk,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::EncryptionFailed)
+                }
+                AlgorithmId::CascadeAesGcmXChaCha => {
+                    let sn_bytes = secondary_nonce_bytes.unwrap();
+                    let mut chunk_sn = sn_bytes;
+                    for i in 0..4 {
+                        chunk_sn[i] ^= idx_bytes[i];
+                    }
 
-                let xchacha_nonce = XNonce::from(chunk_nonce);
-                let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
-                xchacha_cipher.encrypt(&xchacha_nonce, Payload { msg: &c1, aad: aad_hash })
-                    .map_err(|_| CryptoError::EncryptionFailed)
+                    let aes_nonce = AesNonce::from(chunk_sn);
+                    let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
+                    let c1 = aes_cipher
+                        .encrypt(
+                            &aes_nonce,
+                            Payload {
+                                msg: chunk,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::EncryptionFailed)?;
+
+                    let xchacha_nonce = XNonce::from(chunk_nonce);
+                    let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
+                    xchacha_cipher
+                        .encrypt(
+                            &xchacha_nonce,
+                            Payload {
+                                msg: &c1,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::EncryptionFailed)
+                }
+                AlgorithmId::TripleCascadeAesXChaChaLco => {
+                    let sn_bytes = secondary_nonce_bytes.unwrap();
+                    let mut chunk_sn = sn_bytes;
+                    for i in 0..4 {
+                        chunk_sn[i] ^= idx_bytes[i];
+                    }
+
+                    let aes_nonce = AesNonce::from(chunk_sn);
+                    let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
+                    let c1 = aes_cipher
+                        .encrypt(
+                            &aes_nonce,
+                            Payload {
+                                msg: chunk,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::EncryptionFailed)?;
+
+                    let xchacha_nonce = XNonce::from(chunk_nonce);
+                    let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
+                    let mut c2 = xchacha_cipher
+                        .encrypt(
+                            &xchacha_nonce,
+                            Payload {
+                                msg: &c1,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::EncryptionFailed)?;
+
+                    lco::apply_lco(&mut c2, &key_lco, &chunk_nonce);
+                    Ok(c2)
+                }
+                _ => Err(CryptoError::UnsupportedProfile),
             }
-            AlgorithmId::TripleCascadeAesXChaChaLco => {
-                let sn_bytes = secondary_nonce_bytes.unwrap();
-                let mut chunk_sn = sn_bytes;
-                for i in 0..4 { chunk_sn[i] ^= idx_bytes[i]; }
-
-                let aes_nonce = AesNonce::from(chunk_sn);
-                let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
-                let c1 = aes_cipher.encrypt(&aes_nonce, Payload { msg: chunk, aad: aad_hash })
-                    .map_err(|_| CryptoError::EncryptionFailed)?;
-
-                let xchacha_nonce = XNonce::from(chunk_nonce);
-                let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
-                let mut c2 = xchacha_cipher.encrypt(&xchacha_nonce, Payload { msg: &c1, aad: aad_hash })
-                    .map_err(|_| CryptoError::EncryptionFailed)?;
-
-                lco::apply_lco(&mut c2, &*key_lco, &chunk_nonce);
-                Ok(c2)
-            }
-            _ => Err(CryptoError::UnsupportedProfile)
-        }
-    }).collect();
+        })
+        .collect();
 
     let chunks = chunks?;
     let mut total_len = 0;
-    for c in &chunks { total_len += c.len(); }
-    
+    for c in &chunks {
+        total_len += c.len();
+    }
+
     let mut ciphertext = Vec::with_capacity(total_len);
     for mut c in chunks {
         ciphertext.append(&mut c);
@@ -129,11 +179,13 @@ pub fn parallel_decrypt_payload(
         }
         AlgorithmId::CascadeAesGcmXChaCha => {
             hk.expand(b"Lvau-Cascade-AES", &mut *key_aes).unwrap();
-            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha).unwrap();
+            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha)
+                .unwrap();
         }
         AlgorithmId::TripleCascadeAesXChaChaLco => {
             hk.expand(b"Lvau-Cascade-AES", &mut *key_aes).unwrap();
-            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha).unwrap();
+            hk.expand(b"Lvau-Cascade-XChaCha", &mut *key_xchacha)
+                .unwrap();
             hk.expand(b"Lvau-Cascade-LCO", &mut *key_lco).unwrap();
         }
         _ => return Err(CryptoError::UnsupportedProfile),
@@ -141,61 +193,106 @@ pub fn parallel_decrypt_payload(
 
     let encrypted_chunk_size = get_encrypted_chunk_size(algorithm);
 
-    let chunks: Result<Vec<Vec<u8>>, CryptoError> = ciphertext.par_chunks(encrypted_chunk_size).enumerate().map(|(idx, chunk)| {
-        let mut chunk_nonce = *nonce_bytes;
-        let idx_bytes = (idx as u32).to_le_bytes();
-        for i in 0..4 {
-            chunk_nonce[i] ^= idx_bytes[i];
-        }
-
-        match algorithm {
-            AlgorithmId::XChaCha20Poly1305 => {
-                let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
-                let nonce = XNonce::from(chunk_nonce);
-                cipher.decrypt(&nonce, Payload { msg: chunk, aad: aad_hash })
-                    .map_err(|_| CryptoError::DecryptionFailed)
+    let chunks: Result<Vec<Vec<u8>>, CryptoError> = ciphertext
+        .par_chunks(encrypted_chunk_size)
+        .enumerate()
+        .map(|(idx, chunk)| {
+            let mut chunk_nonce = *nonce_bytes;
+            let idx_bytes = (idx as u32).to_le_bytes();
+            for i in 0..4 {
+                chunk_nonce[i] ^= idx_bytes[i];
             }
-            AlgorithmId::CascadeAesGcmXChaCha => {
-                let sn_bytes = secondary_nonce_bytes.unwrap();
-                let mut chunk_sn = sn_bytes;
-                for i in 0..4 { chunk_sn[i] ^= idx_bytes[i]; }
 
-                let xchacha_nonce = XNonce::from(chunk_nonce);
-                let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
-                let c1 = xchacha_cipher.decrypt(&xchacha_nonce, Payload { msg: chunk, aad: aad_hash })
-                    .map_err(|_| CryptoError::DecryptionFailed)?;
+            match algorithm {
+                AlgorithmId::XChaCha20Poly1305 => {
+                    let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
+                    let nonce = XNonce::from(chunk_nonce);
+                    cipher
+                        .decrypt(
+                            &nonce,
+                            Payload {
+                                msg: chunk,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::DecryptionFailed)
+                }
+                AlgorithmId::CascadeAesGcmXChaCha => {
+                    let sn_bytes = secondary_nonce_bytes.unwrap();
+                    let mut chunk_sn = sn_bytes;
+                    for i in 0..4 {
+                        chunk_sn[i] ^= idx_bytes[i];
+                    }
 
-                let aes_nonce = AesNonce::from(chunk_sn);
-                let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
-                aes_cipher.decrypt(&aes_nonce, Payload { msg: &c1, aad: aad_hash })
-                    .map_err(|_| CryptoError::DecryptionFailed)
+                    let xchacha_nonce = XNonce::from(chunk_nonce);
+                    let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
+                    let c1 = xchacha_cipher
+                        .decrypt(
+                            &xchacha_nonce,
+                            Payload {
+                                msg: chunk,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::DecryptionFailed)?;
+
+                    let aes_nonce = AesNonce::from(chunk_sn);
+                    let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
+                    aes_cipher
+                        .decrypt(
+                            &aes_nonce,
+                            Payload {
+                                msg: &c1,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::DecryptionFailed)
+                }
+                AlgorithmId::TripleCascadeAesXChaChaLco => {
+                    let sn_bytes = secondary_nonce_bytes.unwrap();
+                    let mut chunk_sn = sn_bytes;
+                    for i in 0..4 {
+                        chunk_sn[i] ^= idx_bytes[i];
+                    }
+
+                    let mut c2 = chunk.to_vec();
+                    lco::apply_lco(&mut c2, &key_lco, &chunk_nonce);
+
+                    let xchacha_nonce = XNonce::from(chunk_nonce);
+                    let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
+                    let c1 = xchacha_cipher
+                        .decrypt(
+                            &xchacha_nonce,
+                            Payload {
+                                msg: &c2,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::DecryptionFailed)?;
+
+                    let aes_nonce = AesNonce::from(chunk_sn);
+                    let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
+                    aes_cipher
+                        .decrypt(
+                            &aes_nonce,
+                            Payload {
+                                msg: &c1,
+                                aad: aad_hash,
+                            },
+                        )
+                        .map_err(|_| CryptoError::DecryptionFailed)
+                }
+                _ => Err(CryptoError::UnsupportedProfile),
             }
-            AlgorithmId::TripleCascadeAesXChaChaLco => {
-                let sn_bytes = secondary_nonce_bytes.unwrap();
-                let mut chunk_sn = sn_bytes;
-                for i in 0..4 { chunk_sn[i] ^= idx_bytes[i]; }
-
-                let mut c2 = chunk.to_vec();
-                lco::apply_lco(&mut c2, &*key_lco, &chunk_nonce);
-
-                let xchacha_nonce = XNonce::from(chunk_nonce);
-                let xchacha_cipher = XChaCha20Poly1305::new(key_xchacha.as_ref().into());
-                let c1 = xchacha_cipher.decrypt(&xchacha_nonce, Payload { msg: &c2, aad: aad_hash })
-                    .map_err(|_| CryptoError::DecryptionFailed)?;
-
-                let aes_nonce = AesNonce::from(chunk_sn);
-                let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
-                aes_cipher.decrypt(&aes_nonce, Payload { msg: &c1, aad: aad_hash })
-                    .map_err(|_| CryptoError::DecryptionFailed)
-            }
-            _ => Err(CryptoError::UnsupportedProfile)
-        }
-    }).collect();
+        })
+        .collect();
 
     let chunks = chunks?;
     let mut total_len = 0;
-    for c in &chunks { total_len += c.len(); }
-    
+    for c in &chunks {
+        total_len += c.len();
+    }
+
     let mut plaintext = Vec::with_capacity(total_len);
     for mut c in chunks {
         plaintext.append(&mut c);
