@@ -87,3 +87,6 @@ Lvau is modularized into independent crates to minimize attack surface:
 
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🤖 AI Usage
+This project primarily uses AI models such as Gemini for code generation and reviews. Any errors or issues identified in the AI-generated output are reviewed and corrected by humans.
