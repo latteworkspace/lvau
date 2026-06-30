@@ -1,12 +1,16 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*.*.*"
 
 permissions:
   contents: write
+
+env:
+  BIN_NAME: lvau-cli
 
 jobs:
   build:
@@ -46,29 +50,35 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --workspace
+      - name: Build CLI
+        run: cargo build --release --target ${{ matrix.target }} --package lvau-cli
+
+      - name: Debug build output
+        shell: bash
+        run: |
+          echo "target dir:"
+          ls -la target/${{ matrix.target }}/release || true
 
       - name: Package Unix
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/lvau${{ matrix.bin_ext }} dist/
-          tar -czf lvau-${{ matrix.target }}.tar.gz -C dist lvau${{ matrix.bin_ext }}
+          cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.bin_ext }} dist/
+          tar -czf ${{ env.BIN_NAME }}-${{ matrix.target }}.tar.gz -C dist ${{ env.BIN_NAME }}${{ matrix.bin_ext }}
 
       - name: Package Windows
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist
-          Copy-Item "target/${{ matrix.target }}/release/lvau${{ matrix.bin_ext }}" dist/
-          Compress-Archive -Path "dist/*" -DestinationPath "lvau-${{ matrix.target }}.zip"
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.bin_ext }}" dist/
+          Compress-Archive -Path "dist/*" -DestinationPath "${{ env.BIN_NAME }}-${{ matrix.target }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lvau-${{ matrix.target }}
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
           path: |
             *.zip
             *.tar.gz
