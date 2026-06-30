@@ -1,0 +1,298 @@
+/* frontend/src/components/LvauWeb.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-color: #0f111a;
+  --panel-bg: rgba(255, 255, 255, 0.05);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  --text-primary: #f8f9fa;
+  --text-secondary: #adb5bd;
+  --primary-accent: #6b46c1; /* Vibrant purple */
+  --primary-hover: #805ad5;
+  --danger-accent: #e53e3e;
+  --danger-hover: #fc8181;
+  --success-color: #48bb78;
+  --warning-bg: rgba(236, 201, 75, 0.15);
+  --warning-text: #f6e05e;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-image: radial-gradient(circle at top right, rgba(107, 70, 193, 0.2), transparent 40%),
+                    radial-gradient(circle at bottom left, rgba(49, 130, 206, 0.15), transparent 40%);
+}
+
+.lvau-container {
+  width: 100%;
+  max-width: 600px;
+  padding: 32px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: fadeIn 0.5s ease-out;
+  box-sizing: border-box;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.lvau-warning {
+  padding: 16px;
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border-radius: 8px;
+  margin-bottom: 24px;
+  border: 1px solid rgba(236, 201, 75, 0.3);
+}
+
+.lvau-warning h4 {
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lvau-warning p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.lvau-status {
+  margin-bottom: 24px;
+  font-weight: 500;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-online { background-color: var(--success-color); box-shadow: 0 0 8px var(--success-color); }
+.status-offline { background-color: var(--danger-accent); box-shadow: 0 0 8px var(--danger-accent); }
+.status-unknown { background-color: var(--text-secondary); }
+
+.lvau-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  background: rgba(0,0,0,0.2);
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.lvau-tab {
+  flex: 1;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.lvau-tab:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.05);
+}
+
+.lvau-tab.active {
+  background: var(--primary-accent);
+  color: white;
+  box-shadow: 0 4px 12px rgba(107, 70, 193, 0.4);
+}
+
+.lvau-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.lvau-input {
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 15px;
+  transition: all 0.2s ease;
+}
+
+.lvau-input:focus {
+  outline: none;
+  border-color: var(--primary-accent);
+  box-shadow: 0 0 0 2px rgba(107, 70, 193, 0.3);
+}
+
+.lvau-input option {
+  background: var(--bg-color);
+  color: var(--text-primary);
+}
+
+.file-input-wrapper {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  border: 2px dashed var(--panel-border);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.file-input-wrapper:hover {
+  border-color: var(--primary-accent);
+  background: rgba(107, 70, 193, 0.05);
+}
+
+.file-input-wrapper input[type="file"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-input-content {
+  text-align: center;
+  pointer-events: none;
+}
+
+.file-input-content .icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.file-name-display {
+  color: var(--primary-accent);
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.button-group {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  flex: 1;
+  background: var(--primary-accent);
+  color: white;
+}
+
+.btn-primary:not(:disabled):hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(107, 70, 193, 0.4);
+}
+
+.btn-danger {
+  background: var(--danger-accent);
+  color: white;
+}
+
+.btn-danger:hover {
+  background: var(--danger-hover);
+}
+
+.error-message {
+  color: #fc8181;
+  font-size: 14px;
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: rgba(229, 62, 62, 0.1);
+  border-radius: 6px;
+  border: 1px solid rgba(229, 62, 62, 0.2);
+}
+
+.inspect-result {
+  margin-top: 24px;
+  padding: 16px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.inspect-result pre {
+  margin: 0;
+  color: var(--success-color);
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+}
+
+/* Spinner Animation */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

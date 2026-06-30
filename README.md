@@ -29,8 +29,6 @@ Lvau is structurally designed to support future advancements. The `lvau-protocol
 - **Post-Quantum Cryptography (PQC)**: `ML-KEM` and `ML-DSA` hybrids.
 - **Operational Key Providers**: KMS/HSM abstraction interfaces. *(Note: local files are always encrypted locally).*
 
-*(Note: Custom ciphers and extreme obfuscation layers are intentionally excluded from the security boundary as per the Lvau safety philosophy).*
-
 ---
 
 ## 🚀 Installation

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import './LvauWeb.css';
 
 const MAX_UPLOAD_MB = 100;
 
@@ -25,6 +26,13 @@ export const LvauWeb: React.FC<{ lang?: 'en' | 'ja' }> = ({ lang = 'en' }) => {
     setPassword('');
     setError(null);
     setInspectResult(null);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0]);
+      setError(null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -77,7 +85,6 @@ export const LvauWeb: React.FC<{ lang?: 'en' | 'ja' }> = ({ lang = 'en' }) => {
       } else {
         const blob = await res.blob();
         
-        // Extract filename from header if available
         let filename = mode === 'encrypt' ? 'encrypted.lvau' : 'decrypted.bin';
         const disposition = res.headers.get('Content-Disposition');
         if (disposition && disposition.includes('filename="')) {
@@ -115,101 +122,114 @@ export const LvauWeb: React.FC<{ lang?: 'en' | 'ja' }> = ({ lang = 'en' }) => {
   };
 
   const t = {
-    warningTitle: lang === 'ja' ? '⚠️ 重要なセキュリティ警告 (Server API Mode)' : '⚠️ Important Security Warning (Server API Mode)',
+    warningTitle: lang === 'ja' ? '⚠️ セキュリティ警告 (Server API Mode)' : '⚠️ Security Warning (Server API Mode)',
     warningText: lang === 'ja' 
-      ? 'サーバーAPIモードはエンドツーエンド暗号化（E2EE）ではありません。ファイルとパスワードはHTTPS経由で送信され、APIサーバー（Oracle Cloud）のメモリ上で処理されます。機密性の高いファイルの処理には、オフラインで動作するローカルの CLI/GUI 版を使用してください。'
-      : 'Server API mode is NOT End-to-End Encrypted (E2EE). Files and passwords are transmitted over HTTPS and processed in memory on the API server (Oracle Cloud). For highly sensitive files, use the offline local CLI/GUI version.',
+      ? 'サーバーAPIモードはE2EEではありません。ファイルはHTTPS経由で送信され、APIサーバー上で処理されます。機密性の高いファイルにはローカルCLI/GUI版を使用してください。'
+      : 'Server API mode is NOT E2EE. Files are transmitted over HTTPS and processed on the API server. For highly sensitive files, use the local CLI/GUI version.',
     serverStatus: lang === 'ja' ? 'APIサーバー状態: ' : 'API Server Status: ',
     online: lang === 'ja' ? 'オンライン' : 'Online',
     offline: lang === 'ja' ? 'オフライン' : 'Offline',
     encrypt: lang === 'ja' ? '暗号化' : 'Encrypt',
     decrypt: lang === 'ja' ? '復号' : 'Decrypt',
-    inspect: lang === 'ja' ? 'メタデータ検査' : 'Inspect Metadata',
-    selectFile: lang === 'ja' ? 'ファイルを選択' : 'Select File',
-    password: lang === 'ja' ? 'パスワード' : 'Password',
+    inspect: lang === 'ja' ? '検査 (Inspect)' : 'Inspect',
+    selectFile: lang === 'ja' ? 'ファイルを選択、またはドロップ' : 'Select or drop a file',
+    password: lang === 'ja' ? 'マスターパスワード' : 'Master Password',
     profile: lang === 'ja' ? 'セキュリティプロファイル' : 'Security Profile',
-    submit: lang === 'ja' ? '実行' : 'Submit',
+    submit: lang === 'ja' ? '実行を開始' : 'Execute',
     cancel: lang === 'ja' ? 'キャンセル' : 'Cancel',
     loading: lang === 'ja' ? '処理中...' : 'Processing...',
   };
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto', fontFamily: 'sans-serif' }}>
-      <div style={{ padding: '16px', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '8px', marginBottom: '24px' }}>
-        <h4 style={{ margin: '0 0 8px 0' }}>{t.warningTitle}</h4>
-        <p style={{ margin: 0, fontSize: '14px' }}>{t.warningText}</p>
+    <div className="lvau-container">
+      <div className="lvau-warning">
+        <h4>{t.warningTitle}</h4>
+        <p>{t.warningText}</p>
       </div>
 
-      <div style={{ marginBottom: '16px', fontWeight: 'bold' }}>
+      <div className="lvau-status">
         {t.serverStatus} 
-        <span style={{ color: health ? 'green' : 'red' }}>
+        <span className={`status-indicator ${health === null ? 'status-unknown' : (health ? 'status-online' : 'status-offline')}`}></span>
+        <span style={{ color: health ? 'var(--success-color)' : 'var(--danger-accent)' }}>
           {health === null ? '...' : (health ? t.online : t.offline)}
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+      <div className="lvau-tabs">
         {(['encrypt', 'decrypt', 'inspect'] as const).map(m => (
           <button 
             key={m} 
+            type="button"
+            className={`lvau-tab ${mode === m ? 'active' : ''}`}
             onClick={() => handleModeChange(m)}
-            style={{ 
-              fontWeight: mode === m ? 'bold' : 'normal',
-              padding: '8px 16px',
-              cursor: 'pointer'
-            }}
           >
             {t[m]}
           </button>
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div>
-          <label style={{ display: 'block', marginBottom: '4px' }}>{t.selectFile}</label>
-          <input type="file" required onChange={e => setFile(e.target.files?.[0] || null)} />
+      <form className="lvau-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <div className="file-input-wrapper">
+            <input type="file" required onChange={handleFileChange} />
+            <div className="file-input-content">
+              <span className="icon">📁</span>
+              <div>{file ? t.selectFile.replace('、またはドロップ', 'を変更') : t.selectFile}</div>
+              {file && <div className="file-name-display">{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</div>}
+            </div>
+          </div>
         </div>
 
         {mode !== 'inspect' && (
-          <div>
-            <label style={{ display: 'block', marginBottom: '4px' }}>{t.password}</label>
+          <div className="form-group">
+            <label>{t.password}</label>
             <input 
+              className="lvau-input"
               type="password" 
               required 
               value={password} 
-              onChange={e => setPassword(e.target.value)} 
-              style={{ padding: '8px', width: '100%' }}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••••••"
             />
           </div>
         )}
 
         {mode === 'encrypt' && (
-          <div>
-            <label style={{ display: 'block', marginBottom: '4px' }}>{t.profile}</label>
-            <select value={profile} onChange={e => setProfile(e.target.value)} style={{ padding: '8px', width: '100%' }}>
-              <option value="fast">Fast</option>
-              <option value="balanced">Balanced</option>
-              <option value="archive">Archive</option>
-              <option value="paranoid">Paranoid</option>
+          <div className="form-group">
+            <label>{t.profile}</label>
+            <select 
+              className="lvau-input"
+              value={profile} 
+              onChange={e => setProfile(e.target.value)}
+            >
+              <option value="fast">Fast (Lower memory/CPU)</option>
+              <option value="balanced">Balanced (Recommended)</option>
+              <option value="archive">Archive (High memory/CPU)</option>
+              <option value="paranoid">Paranoid (Extreme)</option>
             </select>
           </div>
         )}
 
-        {error && <div style={{ color: 'red', marginTop: '8px' }}>{error}</div>}
+        {error && <div className="error-message">{error}</div>}
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div className="button-group">
           <button 
             type="submit" 
+            className="btn btn-primary"
             disabled={loading || health === false}
-            style={{ flex: 1, padding: '12px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '4px', cursor: (loading || health === false) ? 'not-allowed' : 'pointer' }}
           >
-            {loading ? t.loading : t.submit}
+            {loading ? (
+              <>
+                <span className="spinner"></span> {t.loading}
+              </>
+            ) : t.submit}
           </button>
           
           {loading && (
             <button 
               type="button" 
+              className="btn btn-danger"
               onClick={handleCancel}
-              style={{ padding: '12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
             >
               {t.cancel}
             </button>
@@ -218,7 +238,7 @@ export const LvauWeb: React.FC<{ lang?: 'en' | 'ja' }> = ({ lang = 'en' }) => {
       </form>
 
       {inspectResult && (
-        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
+        <div className="inspect-result">
           <pre>{JSON.stringify(inspectResult, null, 2)}</pre>
         </div>
       )}
