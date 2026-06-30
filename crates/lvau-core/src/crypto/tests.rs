@@ -13,7 +13,7 @@ fn test_roundtrip_password_encryption() {
     fs::write(&input, b"Hello, Lvau Boring Crypto!").unwrap();
 
     let password = Secret::new("my_super_secret_password".to_string());
-    
+
     encrypt_file_password(&input, &enc, password.clone(), None, SecurityProfile::Fast).unwrap();
     decrypt_file_password(&enc, &dec, password, None).unwrap();
 
@@ -31,9 +31,16 @@ fn test_cascade_paranoid_with_seed() {
 
     let password = Secret::new("top_secret_password".to_string());
     let seed = Secret::new("my_random_seed_123".to_string());
-    
-    encrypt_file_password(&input, &enc, password.clone(), Some(seed.clone()), SecurityProfile::Paranoid).unwrap();
-    
+
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        Some(seed.clone()),
+        SecurityProfile::Paranoid,
+    )
+    .unwrap();
+
     // Test with correct seed
     decrypt_file_password(&enc, &dec, password.clone(), Some(seed.clone())).unwrap();
     let decrypted_content = fs::read(&dec).unwrap();
@@ -81,7 +88,7 @@ fn test_tampered_ciphertext_fails() {
     // Tamper with the ciphertext inside the envelope
     let encoded_envelope = fs::read(&enc).unwrap();
     let mut envelope: Envelope = postcard::from_bytes(&encoded_envelope).unwrap();
-    
+
     if let Some(last_byte) = envelope.ciphertext.last_mut() {
         *last_byte ^= 0xFF; // Flip bits
     }

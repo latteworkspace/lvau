@@ -1,16 +1,13 @@
-pub mod lco;
 pub mod keys;
+pub mod lco;
 pub mod parallel;
-use parallel::{parallel_encrypt_payload, parallel_decrypt_payload};
+use parallel::{parallel_decrypt_payload, parallel_encrypt_payload};
 
-use keys::{HybridPublicKey, HybridPrivateKey};
+use keys::{HybridPrivateKey, HybridPublicKey};
 use ml_kem::{Decapsulate, Encapsulate};
-use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use aes_gcm::{Aes256Gcm, KeyInit as AesKeyInit, Nonce as AesNonce};
 use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::{Aead, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use log::{debug, info};
 use lvau_protocol::envelope::{
@@ -19,7 +16,7 @@ use lvau_protocol::envelope::{
 };
 use rand_core::{OsRng, RngCore};
 use secrecy::{ExposeSecret, Secret};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -46,20 +43,33 @@ pub enum CryptoError {
     MissingSecondaryNonce,
 }
 
-fn derive_master_key(password: &Secret<String>, seed: Option<&Secret<String>>, kdf: &KdfParams) -> Zeroizing<[u8; 32]> {
+fn derive_master_key(
+    password: &Secret<String>,
+    seed: Option<&Secret<String>>,
+    kdf: &KdfParams,
+) -> Zeroizing<[u8; 32]> {
     match kdf {
-        KdfParams::Argon2id { m_cost, t_cost, p_cost, salt } => {
-            info!("Initializing Argon2id KDF with m_cost={}, t_cost={}, p_cost={}", m_cost, t_cost, p_cost);
+        KdfParams::Argon2id {
+            m_cost,
+            t_cost,
+            p_cost,
+            salt,
+        } => {
+            info!(
+                "Initializing Argon2id KDF with m_cost={}, t_cost={}, p_cost={}",
+                m_cost, t_cost, p_cost
+            );
             let params = Params::new(*m_cost, *t_cost, *p_cost, Some(32)).unwrap();
-            
+
             let argon2 = if let Some(s) = seed {
                 debug!("Applying cryptographic seed (pepper) to KDF.");
                 Argon2::new_with_secret(
                     s.expose_secret().as_bytes(),
                     Algorithm::Argon2id,
                     Version::V0x13,
-                    params
-                ).unwrap()
+                    params,
+                )
+                .unwrap()
             } else {
                 Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             };
@@ -105,14 +115,21 @@ pub fn encrypt_file_password(
     let mut salt = [0u8; 16];
     rng.fill_bytes(&mut salt);
 
-    let kdf = KdfParams::Argon2id { m_cost, t_cost, p_cost, salt };
+    let kdf = KdfParams::Argon2id {
+        m_cost,
+        t_cost,
+        p_cost,
+        salt,
+    };
     let master_key = derive_master_key(&password, seed.as_ref(), &kdf);
 
     let mut nonce_bytes = [0u8; 24];
     rng.fill_bytes(&mut nonce_bytes);
-    
+
     let mut secondary_nonce_bytes = None;
-    if algorithm == AlgorithmId::CascadeAesGcmXChaCha || algorithm == AlgorithmId::TripleCascadeAesXChaChaLco {
+    if algorithm == AlgorithmId::CascadeAesGcmXChaCha
+        || algorithm == AlgorithmId::TripleCascadeAesXChaChaLco
+    {
         let mut sn = [0u8; 12];
         rng.fill_bytes(&mut sn);
         secondary_nonce_bytes = Some(sn);
@@ -134,7 +151,7 @@ pub fn encrypt_file_password(
     let aad_hash: [u8; 32] = hasher.finalize().into();
 
     let hk = Hkdf::<Sha256>::new(None, &*master_key);
-    
+
     let ciphertext = parallel_encrypt_payload(
         &algorithm,
         &plaintext,
@@ -166,7 +183,10 @@ pub fn encrypt_file_keypair(
     recipient_pub: &HybridPublicKey,
     profile: SecurityProfile,
 ) -> Result<(), CryptoError> {
-    info!("Starting hybrid keypair encryption for {}", in_path.display());
+    info!(
+        "Starting hybrid keypair encryption for {}",
+        in_path.display()
+    );
 
     let plaintext = fs::read(in_path)?;
     let mut rng = OsRng;
@@ -182,14 +202,16 @@ pub fn encrypt_file_keypair(
     rng.fill_bytes(&mut nonce_bytes);
 
     let mut secondary_nonce_bytes = None;
-    if algorithm == AlgorithmId::CascadeAesGcmXChaCha || algorithm == AlgorithmId::TripleCascadeAesXChaChaLco {
+    if algorithm == AlgorithmId::CascadeAesGcmXChaCha
+        || algorithm == AlgorithmId::TripleCascadeAesXChaChaLco
+    {
         let mut sn = [0u8; 12];
         rng.fill_bytes(&mut sn);
         secondary_nonce_bytes = Some(sn);
     }
 
     // 1. Generate ephemeral X25519
-    let ephem_x25519_priv = StaticSecret::random_from_rng(&mut rng);
+    let ephem_x25519_priv = StaticSecret::random_from_rng(rng);
     let ephem_x25519_pub = X25519PublicKey::from(&ephem_x25519_priv);
     let x25519_ss = ephem_x25519_priv.diffie_hellman(&recipient_pub.x25519);
 
@@ -203,7 +225,7 @@ pub fn encrypt_file_keypair(
 
     let hk = Hkdf::<Sha256>::new(None, &combined_ss);
     let mut payload_key = Zeroizing::new([0u8; 32]);
-    hk.expand(b"Lvau-Hybrid-Payload", &mut *payload_key);
+    let _ = hk.expand(b"Lvau-Hybrid-Payload", &mut *payload_key);
 
     let header = EnvelopeHeader {
         magic: MAGIC_REAL,
@@ -264,16 +286,30 @@ pub fn decrypt_memory_keypair(
     priv_key: &HybridPrivateKey,
 ) -> Result<Vec<u8>, CryptoError> {
     let envelope: Envelope = postcard::from_bytes(data)?;
-    envelope.validate().map_err(|_| CryptoError::Validation("Invalid magic bytes or missing MAC"))?;
+    envelope
+        .validate()
+        .map_err(|_| CryptoError::Validation("Invalid magic bytes or missing MAC"))?;
 
-    let recipient = envelope.header.recipients.iter().find(|r| matches!(r, Recipient::X25519MlkemHybrid { .. }))
+    let recipient = envelope
+        .header
+        .recipients
+        .iter()
+        .find(|r| matches!(r, Recipient::X25519MlkemHybrid { .. }))
         .ok_or(CryptoError::DecryptionFailed)?;
 
-    let payload_key = if let Recipient::X25519MlkemHybrid { ephemeral_public_x25519, mlkem_ciphertext, .. } = recipient {
+    let payload_key = if let Recipient::X25519MlkemHybrid {
+        ephemeral_public_x25519,
+        mlkem_ciphertext,
+        ..
+    } = recipient
+    {
         let ephem_pub = X25519PublicKey::from(*ephemeral_public_x25519);
         let x25519_ss = priv_key.x25519.diffie_hellman(&ephem_pub);
 
-        let mlkem_ct = mlkem_ciphertext.as_slice().try_into().map_err(|_| CryptoError::DecryptionFailed)?;
+        let mlkem_ct = mlkem_ciphertext
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::DecryptionFailed)?;
         let mlkem_ss = priv_key.mlkem.decapsulate(&mlkem_ct);
 
         let mut combined_ss = Vec::new();
@@ -294,13 +330,16 @@ pub fn decrypt_memory_keypair(
     let computed_hash: [u8; 32] = hasher.finalize().into();
 
     if computed_hash != envelope.aad_hash {
-        return Err(CryptoError::Validation("Invalid metadata in decrypted payload"));
+        return Err(CryptoError::Validation(
+            "Invalid metadata in decrypted payload",
+        ));
     }
 
     let plaintext = parallel_decrypt_payload(
         &envelope.header.algorithm,
         &envelope.ciphertext,
-        &Hkdf::<Sha256>::from_prk(payload_key.as_ref()).map_err(|_| CryptoError::DecryptionFailed)?,
+        &Hkdf::<Sha256>::from_prk(payload_key.as_ref())
+            .map_err(|_| CryptoError::DecryptionFailed)?,
         &envelope.nonce,
         envelope.secondary_nonce,
         &envelope.aad_hash,
@@ -319,7 +358,11 @@ pub fn decrypt_memory_password(
 
     envelope.validate().map_err(CryptoError::Validation)?;
 
-    let kdf = envelope.header.kdf.as_ref().ok_or(CryptoError::MissingKdfParams)?;
+    let kdf = envelope
+        .header
+        .kdf
+        .as_ref()
+        .ok_or(CryptoError::MissingKdfParams)?;
     let master_key = derive_master_key(&password, seed.as_ref(), kdf);
     let hk = Hkdf::<Sha256>::new(None, &*master_key);
 

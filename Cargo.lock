@@ -3279,11 +3279,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "lazy_static",
  "lvau-core",
  "lvau-protocol",
  "secrecy",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

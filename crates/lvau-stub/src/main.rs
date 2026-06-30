@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui;
-use lvau_core::crypto::{decrypt_memory_password, decrypt_memory_keypair, keys::HybridPrivateKey};
+use lvau_core::crypto::{decrypt_memory_keypair, decrypt_memory_password, keys::HybridPrivateKey};
 use secrecy::Secret;
 use std::env;
 use std::fs::File;
@@ -30,7 +30,10 @@ fn extract_payload() -> Result<Vec<u8>, String> {
     len_bytes.copy_from_slice(&trailer[0..8]);
     let payload_len = u64::from_le_bytes(len_bytes);
 
-    if file.seek(SeekFrom::End(-(16 + payload_len as i64))).is_err() {
+    if file
+        .seek(SeekFrom::End(-(16 + payload_len as i64)))
+        .is_err()
+    {
         return Err("Failed to seek to payload.".to_string());
     }
 
@@ -109,7 +112,8 @@ impl eframe::App for SfxExtractorApp {
             } else {
                 ui.horizontal(|ui| {
                     if ui.button("Select Private Key (.lvau-key)").clicked() {
-                        let dialog = rfd::FileDialog::new().add_filter("Private Key", &["lvau-key"]);
+                        let dialog =
+                            rfd::FileDialog::new().add_filter("Private Key", &["lvau-key"]);
                         if let Some(path) = dialog.pick_file() {
                             self.keyfile_path = Some(path);
                         }
@@ -123,10 +127,10 @@ impl eframe::App for SfxExtractorApp {
             ui.add_space(20.0);
 
             ui.horizontal(|ui| {
-                if ui.button("Select Output File").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().save_file() {
-                        self.out_file = Some(path);
-                    }
+                if ui.button("Select Output File").clicked()
+                    && let Some(path) = rfd::FileDialog::new().save_file()
+                {
+                    self.out_file = Some(path);
                 }
                 if let Some(path) = &self.out_file {
                     ui.label(path.display().to_string());
@@ -135,51 +139,60 @@ impl eframe::App for SfxExtractorApp {
 
             ui.add_space(20.0);
 
-            let can_proceed = self.out_file.is_some() && (
-                (self.auth_mode == AuthMode::Password && !self.secret.is_empty()) ||
-                (self.auth_mode == AuthMode::KeyFile && self.keyfile_path.is_some())
-            );
+            let can_proceed = self.out_file.is_some()
+                && ((self.auth_mode == AuthMode::Password && !self.secret.is_empty())
+                    || (self.auth_mode == AuthMode::KeyFile && self.keyfile_path.is_some()));
 
-            if ui.add_enabled(can_proceed, egui::Button::new("Decrypt & Extract")).clicked() {
-                if let Some(payload) = &self.payload {
-                    if let Some(out_file) = &self.out_file {
-                        let result = match self.auth_mode {
-                            AuthMode::Password => {
-                                let pwd = Secret::new(self.secret.clone());
-                                let seed_val = if self.seed.is_empty() { None } else { Some(Secret::new(self.seed.clone())) };
-                                decrypt_memory_password(payload, pwd, seed_val)
-                            }
-                            AuthMode::KeyFile => {
-                                let kp = self.keyfile_path.as_ref().unwrap();
-                                if let Ok(priv_key) = HybridPrivateKey::load_from_file(kp) {
-                                    decrypt_memory_keypair(payload, &priv_key)
-                                } else {
-                                    Err(lvau_core::crypto::CryptoError::DecryptionFailed)
-                                }
-                            }
+            if ui
+                .add_enabled(can_proceed, egui::Button::new("Decrypt & Extract"))
+                .clicked()
+                && let Some(payload) = &self.payload
+                && let Some(out_file) = &self.out_file
+            {
+                let result = match self.auth_mode {
+                    AuthMode::Password => {
+                        let pwd = Secret::new(self.secret.clone());
+                        let seed_val = if self.seed.is_empty() {
+                            None
+                        } else {
+                            Some(Secret::new(self.seed.clone()))
                         };
+                        decrypt_memory_password(payload, pwd, seed_val)
+                    }
+                    AuthMode::KeyFile => {
+                        let kp = self.keyfile_path.as_ref().unwrap();
+                        if let Ok(priv_key) = HybridPrivateKey::load_from_file(kp) {
+                            decrypt_memory_keypair(payload, &priv_key)
+                        } else {
+                            Err(lvau_core::crypto::CryptoError::DecryptionFailed)
+                        }
+                    }
+                };
 
-                        match result {
-                            Ok(plaintext) => {
-                                if let Ok(mut f) = std::fs::File::create(out_file) {
-                                    if f.write_all(&plaintext).is_ok() {
-                                        self.status = "Extraction Successful!".to_string();
-                                    } else {
-                                        self.status = "Failed to write to file.".to_string();
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                self.status = "Decryption Failed! Wrong password or corrupted file.".to_string();
+                match result {
+                    Ok(plaintext) => {
+                        if let Ok(mut f) = std::fs::File::create(out_file) {
+                            if f.write_all(&plaintext).is_ok() {
+                                self.status = "Extraction Successful!".to_string();
+                            } else {
+                                self.status = "Failed to write to file.".to_string();
                             }
                         }
+                    }
+                    Err(_) => {
+                        self.status =
+                            "Decryption Failed! Wrong password or corrupted file.".to_string();
                     }
                 }
             }
 
             ui.add_space(20.0);
             if !self.status.is_empty() {
-                let color = if self.status.contains("Successful") { egui::Color32::GREEN } else { egui::Color32::RED };
+                let color = if self.status.contains("Successful") {
+                    egui::Color32::GREEN
+                } else {
+                    egui::Color32::RED
+                };
                 ui.label(egui::RichText::new(&self.status).color(color));
             }
         });
