@@ -5,7 +5,7 @@ members = [
     "crates/lvau-cli",
     "crates/lvau-gui",
     "crates/lvau-stub"
-, "crates/lvau-api"]
+]
 resolver = "2"
 
 [profile.release]
