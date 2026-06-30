@@ -18,7 +18,9 @@ fi
 
 sudo useradd -r -s /usr/sbin/nologin lvau 2>/dev/null || true
 sudo install -d -o lvau -g lvau -m 0750 "$INSTALL_DIR"
-sudo install -m 0755 "$1" "$REMOTE_BIN"
+if [[ "$(readlink -f "$1")" != "$(readlink -f "$REMOTE_BIN" 2>/dev/null || printf '%s' "$REMOTE_BIN")" ]]; then
+  sudo install -m 0755 "$1" "$REMOTE_BIN"
+fi
 
 if [[ -x "$INSTALL_DIR/lvau-api" ]]; then
   sudo cp "$INSTALL_DIR/lvau-api" "$INSTALL_DIR/lvau-api.previous"

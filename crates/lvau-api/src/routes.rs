@@ -306,7 +306,6 @@ pub async fn encrypt_file(
     let mut password = None;
     let mut profile = SecurityProfile::Balanced;
     let max_mb = get_max_mb();
-    let _permit = try_acquire_job()?;
 
     let temp_dir = Builder::new().prefix("lvau_enc_").tempdir().map_err(|_| {
         (
@@ -368,6 +367,7 @@ pub async fn encrypt_file(
         )),
     ))?;
 
+    let _permit = try_acquire_job()?;
     let out_path = temp_dir.path().join("out.lvau");
 
     let res = tokio::task::spawn_blocking(move || {
@@ -420,7 +420,6 @@ pub async fn decrypt_file(
     let mut temp_dir_opt = None;
     let mut password = None;
     let max_mb = get_max_mb();
-    let _permit = try_acquire_job()?;
 
     let temp_dir = Builder::new().prefix("lvau_dec_").tempdir().map_err(|_| {
         (
@@ -465,6 +464,7 @@ pub async fn decrypt_file(
         )),
     ))?;
 
+    let _permit = try_acquire_job()?;
     let out_path = temp_dir.path().join("out.tmp");
 
     let res = tokio::task::spawn_blocking(move || {

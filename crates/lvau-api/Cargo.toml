@@ -24,3 +24,6 @@ lvau-protocol = { path = "../lvau-protocol" }
 subtle = "2.5"
 lazy_static = "1.5"
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+

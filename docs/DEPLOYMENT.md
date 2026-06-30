@@ -61,9 +61,10 @@ For `aarch64`, build an ARM64 Linux binary or build directly on Oracle.
 
 ## Nginx
 
-Use `deploy/nginx-lvau-api.conf` as a separate `api.lattee.jp` site. Do not mix it with wg-easy, AdGuard, Basic auth, client certificate admin blocks, or `sandvpn.lattee.jp` admin services.
+Use `deploy/nginx-lvau-api.conf` as a separate `api.lattee.jp` site and `deploy/nginx-lvau-limits.conf` for the global rate-limit zones. Do not mix the `api.lattee.jp` server block with wg-easy, AdGuard, Basic auth, client certificate admin blocks, or `sandvpn.lattee.jp` admin services.
 
 ```sh
+sudo cp deploy/nginx-lvau-limits.conf /etc/nginx/conf.d/lvau-limits.conf
 sudo cp deploy/nginx-lvau-api.conf /etc/nginx/sites-available/lvau-api
 sudo ln -s /etc/nginx/sites-available/lvau-api /etc/nginx/sites-enabled/lvau-api
 sudo certbot --nginx -d api.lattee.jp
@@ -72,6 +73,8 @@ sudo systemctl reload nginx
 ```
 
 The `api.lattee.jp` Lvau API server block must not contain `auth_basic` or `ssl_verify_client`.
+
+Port 443 must be owned by Nginx. If a Docker service publishes `443:443`, move that service behind Nginx or to another port before expecting `https://api.lattee.jp` to work. On the Oracle host used for this deployment, AdGuard admin remains available through the existing Nginx-protected `8444` route after removing its direct host `443:443/tcp` publish.
 
 ## GitHub Actions Backend Deploy
 
