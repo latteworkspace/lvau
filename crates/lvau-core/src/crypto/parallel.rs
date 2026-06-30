@@ -52,17 +52,30 @@ pub fn parallel_encrypt_payload(
         _ => return Err(CryptoError::UnsupportedProfile),
     }
 
-    let chunks: Result<Vec<Vec<u8>>, CryptoError> = plaintext
+    let out_chunk_size = get_encrypted_chunk_size(algorithm);
+    let tag_size = out_chunk_size - CHUNK_SIZE;
+
+    let mut total_out_len = 0;
+    if !plaintext.is_empty() {
+        let num_chunks = (plaintext.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let last_chunk_len = plaintext.len() - (num_chunks - 1) * CHUNK_SIZE;
+        total_out_len = (num_chunks - 1) * out_chunk_size + last_chunk_len + tag_size;
+    }
+
+    let mut ciphertext = vec![0u8; total_out_len];
+
+    plaintext
         .par_chunks(CHUNK_SIZE)
+        .zip(ciphertext.par_chunks_mut(out_chunk_size))
         .enumerate()
-        .map(|(idx, chunk)| {
+        .try_for_each(|(idx, (chunk, out_chunk))| -> Result<(), CryptoError> {
             let mut chunk_nonce = *nonce_bytes;
             let idx_bytes = (idx as u32).to_le_bytes();
             for i in 0..4 {
                 chunk_nonce[i] ^= idx_bytes[i];
             }
 
-            match algorithm {
+            let encrypted = match algorithm {
                 AlgorithmId::XChaCha20Poly1305 => {
                     let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
                     let nonce = XNonce::from(chunk_nonce);
@@ -142,20 +155,11 @@ pub fn parallel_encrypt_payload(
                     Ok(c2)
                 }
                 _ => Err(CryptoError::UnsupportedProfile),
-            }
-        })
-        .collect();
+            }?;
 
-    let chunks = chunks?;
-    let mut total_len = 0;
-    for c in &chunks {
-        total_len += c.len();
-    }
-
-    let mut ciphertext = Vec::with_capacity(total_len);
-    for mut c in chunks {
-        ciphertext.append(&mut c);
-    }
+            out_chunk.copy_from_slice(&encrypted);
+            Ok(())
+        })?;
 
     Ok(ciphertext)
 }
@@ -193,17 +197,32 @@ pub fn parallel_decrypt_payload(
 
     let encrypted_chunk_size = get_encrypted_chunk_size(algorithm);
 
-    let chunks: Result<Vec<Vec<u8>>, CryptoError> = ciphertext
+    let tag_size = encrypted_chunk_size - CHUNK_SIZE;
+
+    let mut total_out_len = 0;
+    if !ciphertext.is_empty() {
+        let num_chunks = (ciphertext.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
+        let last_chunk_len = ciphertext.len() - (num_chunks - 1) * encrypted_chunk_size;
+        if last_chunk_len < tag_size {
+            return Err(CryptoError::DecryptionFailed);
+        }
+        total_out_len = (num_chunks - 1) * CHUNK_SIZE + (last_chunk_len - tag_size);
+    }
+
+    let mut plaintext = vec![0u8; total_out_len];
+
+    ciphertext
         .par_chunks(encrypted_chunk_size)
+        .zip(plaintext.par_chunks_mut(CHUNK_SIZE))
         .enumerate()
-        .map(|(idx, chunk)| {
+        .try_for_each(|(idx, (chunk, out_chunk))| -> Result<(), CryptoError> {
             let mut chunk_nonce = *nonce_bytes;
             let idx_bytes = (idx as u32).to_le_bytes();
             for i in 0..4 {
                 chunk_nonce[i] ^= idx_bytes[i];
             }
 
-            match algorithm {
+            let decrypted = match algorithm {
                 AlgorithmId::XChaCha20Poly1305 => {
                     let cipher = XChaCha20Poly1305::new(file_key.as_ref().into());
                     let nonce = XNonce::from(chunk_nonce);
@@ -283,20 +302,11 @@ pub fn parallel_decrypt_payload(
                         .map_err(|_| CryptoError::DecryptionFailed)
                 }
                 _ => Err(CryptoError::UnsupportedProfile),
-            }
-        })
-        .collect();
+            }?;
 
-    let chunks = chunks?;
-    let mut total_len = 0;
-    for c in &chunks {
-        total_len += c.len();
-    }
-
-    let mut plaintext = Vec::with_capacity(total_len);
-    for mut c in chunks {
-        plaintext.append(&mut c);
-    }
+            out_chunk.copy_from_slice(&decrypted);
+            Ok(())
+        })?;
 
     Ok(plaintext)
 }

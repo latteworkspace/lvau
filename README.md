@@ -1,8 +1,13 @@
 <div align="center">
-  <h1>☁ELvau</h1>
+  <h1>☁️ Lvau</h1>
   <p><strong>A secure-by-default, accessible local file encryption toolkit.</strong></p>
   <p><i>"Cryptography should be standard, robust, and boring. Obfuscation is secondary. UX prevents mistakes."</i></p>
-  <p>English | <a href="README_ja.md">日本誁E(Japanese)</a></p>
+  <p>English | <a href="README_ja.md">日本語 (Japanese)</a></p>
+
+  <br/>
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License" />
 </div>
 
 ---
@@ -79,9 +84,21 @@ A cross-platform native graphical wizard is available. Simply select your target
 
 ---
 
-## 🏗EEWorkspace Architecture
+## 🏗️ Workspace Architecture
 
 Lvau is modularized into independent crates to minimize attack surface:
+
+```mermaid
+graph TD;
+    CLI[lvau-cli] --> Core(lvau-core)
+    GUI[lvau-gui] --> Core
+    API[lvau-api] --> Core
+    Web[Frontend UI] --> API
+    Core --> Protocol[lvau-protocol]
+    style Core fill:#6b46c1,color:#fff
+    style Web fill:#3182ce,color:#fff
+```
+
 - `lvau-protocol`: Binary format definitions and serialization (`postcard`). Contains the strict `Envelope` specification.
 - `lvau-core`: The crypto engine handling Argon2id, HKDF, and XChaCha20-Poly1305 logic via `secrecy` constraints.
 - `lvau-api`: The web API backend providing upload endpoints (NOT E2EE).

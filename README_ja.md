@@ -1,8 +1,13 @@
 <div align="center">
-  <h1>☁ELvau</h1>
+  <h1>☁️ Lvau</h1>
   <p><strong>デフォルトで安全な、使いやすいローカルファイル暗号化ツールキット。</strong></p>
   <p><i>「暗号化は標準的で、堅牢で、退屈であるべきだ。難読化は二の次。UXはミスを防ぐ。」</i></p>
-  <p><a href="README.md">English</a> | 日本誁E(Japanese)</p>
+  <p><a href="README.md">English</a> | 日本語 (Japanese)</p>
+  
+  <br/>
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License" />
 </div>
 
 ---
@@ -23,8 +28,6 @@ Lvau は将来の進歩に対応できるよう構造的に設計されていま
 - **非対称暗号化**: 受信者の鍵をラップするための `X25519` と、マニフェストの署名のための `Ed25519`。
 - **耐量子暗号 (PQC)**: `ML-KEM` と `ML-DSA` のハイブリッド。
 - **運用キープロバイダ**: KMS/HSM 抽象化インターフェイス。*(注: ローカルファイルは常にローカルで暗号化されます)。*
-
-*(注: Lvau の安全性に関する哲学に基づき、独自の暗号方式や過度な難読化レイヤーは意図的にセキュリティ境界から除外されています)。*
 
 ---
 
@@ -79,9 +82,21 @@ lvau-cli inspect --in encrypted.lvau
 
 ---
 
-## 🏗EEワークスペースアーキテクチャ
+## 🏗️ ワークスペースアーキテクチャ
 
 Lvau は攻撃対象領域を最小限に抑えるため、独立したクレートにモジュール化されています：
+
+```mermaid
+graph TD;
+    CLI[lvau-cli] --> Core(lvau-core)
+    GUI[lvau-gui] --> Core
+    API[lvau-api] --> Core
+    Web[Frontend UI] --> API
+    Core --> Protocol[lvau-protocol]
+    style Core fill:#6b46c1,color:#fff
+    style Web fill:#3182ce,color:#fff
+```
+
 - `lvau-protocol`: バイナリフォーマットの定義とシリアライズ (`postcard`)。厳密な `Envelope` 仕様を含みます。
 - `lvau-core`: `secrecy` 制約を介して Argon2id、HKDF、および XChaCha20-Poly1305 ロジックを処理する暗号化エンジン。
 - `lvau-api`: アップロードエンドポイントを提供する Web API バックエンド (E2EEではありません)。
@@ -90,11 +105,7 @@ Lvau は攻撃対象領域を最小限に抑えるため、独立したクレー
 - `lvau-stub`: 将来の SFX 統合機能のための最小限のプレースホルダー実行ファイル。
 
 ## 📄 ライセンス
-<<<<<<< HEAD
 このプロジェクトは MIT ライセンスの下でライセンスされています - 詳細は [LICENSE](LICENSE) ファイルを参照してください。
 
 ## 🤖 AI使用について
 このプロジェクトには主にGeminiなどを用いりレビュー、エラーなどは人間が修正しています。
-=======
-このプロジェクトは MIT ライセンスの下でライセンスされています - 詳細は [LICENSE](LICENSE) ファイルをご覧ください。
->>>>>>> 44de336 (Format Rust code)
