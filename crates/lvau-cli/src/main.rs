@@ -4,6 +4,7 @@ use lvau_core::crypto::{
     decrypt_file_keypair, decrypt_file_password, encrypt_file_keypair, encrypt_file_password,
     inspect_envelope,
     keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
+    verify_file_keypair, verify_file_password,
 };
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
@@ -119,6 +120,36 @@ enum Commands {
         #[arg(short, long)]
         in_file: PathBuf,
     },
+    /// Verify file integrity without writing plaintext to disk.
+    Verify {
+        /// Input file path.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Use password verification.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Use private key verification.
+        #[arg(long)]
+        priv_key: Option<PathBuf>,
+
+        /// Use an additional cryptographic seed (pepper).
+        #[arg(long, default_value_t = false)]
+        seed: bool,
+
+        /// Read the seed from a local file instead of prompting.
+        #[arg(long)]
+        seed_file: Option<PathBuf>,
+    },
+    /// Run built-in integration tests to ensure cryptography is functioning correctly.
+    SelfTest,
+    /// Print environment diagnostics and check for required dependencies.
+    Doctor,
 }
 
 #[derive(Debug)]
@@ -462,8 +493,288 @@ fn run() -> Result<(), CliError> {
                 }
             }
         }
+        Commands::Verify {
+            in_file,
+            password,
+            password_file,
+            priv_key,
+            seed,
+            seed_file,
+        } => {
+            ensure_input_file(&in_file)?;
+            require_one_mode(
+                password,
+                password_file.as_deref(),
+                priv_key.is_some(),
+                "--password/--password-file",
+                "--priv-key",
+            )?;
+
+            let file_len = fs::metadata(&in_file).map(|m| m.len()).unwrap_or(0);
+            let pb = get_progress_bar(file_len);
+            let mut progress_callback = |bytes: u64| pb.set_position(bytes);
+
+            if let Some(priv_path) = priv_key {
+                let pk = HybridPrivateKey::load_from_file(&priv_path)?;
+                verify_file_keypair(&in_file, &pk, Some(&mut progress_callback))?;
+            } else {
+                let pwd = password_secret(password, password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                let seed_val = seed_secret(seed, seed_file.as_deref())?;
+                verify_file_password(&in_file, pwd, seed_val, Some(&mut progress_callback))?;
+            }
+            pb.finish_and_clear();
+
+            println!("Verification successful: {}", in_file.display());
+        }
+        Commands::Doctor => {
+            println!("Lvau Diagnostics");
+            println!("----------------");
+            println!("Version: {}", env!("CARGO_PKG_VERSION"));
+            println!("OS: {}", std::env::consts::OS);
+            println!("Arch: {}", std::env::consts::ARCH);
+
+            let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("unknown"));
+            println!("Executable path: {}", exe_path.display());
+
+            let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+            let stub_name = if cfg!(windows) {
+                "lvau-stub.exe"
+            } else {
+                "lvau-stub"
+            };
+            let stub_path = exe_dir.join(stub_name);
+            println!("SFX Stub available: {}", stub_path.exists());
+
+            let test_file = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".lvau-write-test");
+            let writable = fs::write(&test_file, b"test").is_ok();
+            if writable {
+                let _ = fs::remove_file(&test_file);
+            }
+            println!("Current directory writable: {}", writable);
+        }
+        Commands::SelfTest => {
+            println!("Running self-test...");
+            run_self_test()?;
+        }
     }
     Ok(())
+}
+
+fn run_self_test() -> Result<(), CliError> {
+    let mut passed = 0;
+    let mut failed = 0;
+
+    let mut run_test = |name: &str, test: Box<dyn Fn() -> Result<(), CliError>>| {
+        print!("Test {:<30} ... ", name);
+        let _ = io::stdout().flush();
+        match test() {
+            Ok(_) => {
+                println!("OK");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("FAILED ({})", e);
+                failed += 1;
+            }
+        }
+    };
+
+    run_test(
+        "password_roundtrip",
+        Box::new(|| {
+            let in_path = std::env::temp_dir().join("lvau_test_in_pw.bin");
+            let enc_path = std::env::temp_dir().join("lvau_test_enc_pw.lvau");
+            let dec_path = std::env::temp_dir().join("lvau_test_dec_pw.bin");
+            let data = b"hello world password test";
+            fs::write(&in_path, data)?;
+
+            encrypt_file_password(
+                &in_path,
+                &enc_path,
+                Secret::new("testpass".into()),
+                None,
+                SecurityProfile::Fast,
+                None,
+            )?;
+            decrypt_file_password(
+                &enc_path,
+                &dec_path,
+                Secret::new("testpass".into()),
+                None,
+                None,
+            )?;
+
+            let dec_data = fs::read(&dec_path)?;
+            let _ = fs::remove_file(&in_path);
+            let _ = fs::remove_file(&enc_path);
+            let _ = fs::remove_file(&dec_path);
+
+            if dec_data == data {
+                Ok(())
+            } else {
+                Err(CliError::Message("Data mismatch".into()))
+            }
+        }),
+    );
+
+    run_test(
+        "wrong_password_rejection",
+        Box::new(|| {
+            let in_path = std::env::temp_dir().join("lvau_test_in_wp.bin");
+            let enc_path = std::env::temp_dir().join("lvau_test_enc_wp.lvau");
+            let dec_path = std::env::temp_dir().join("lvau_test_dec_wp.bin");
+            let data = b"hello world password test";
+            fs::write(&in_path, data)?;
+
+            encrypt_file_password(
+                &in_path,
+                &enc_path,
+                Secret::new("testpass".into()),
+                None,
+                SecurityProfile::Fast,
+                None,
+            )?;
+            let res = decrypt_file_password(
+                &enc_path,
+                &dec_path,
+                Secret::new("wrongpass".into()),
+                None,
+                None,
+            );
+
+            let _ = fs::remove_file(&in_path);
+            let _ = fs::remove_file(&enc_path);
+            let _ = fs::remove_file(&dec_path);
+
+            if res.is_err() {
+                Ok(())
+            } else {
+                Err(CliError::Message("Expected decryption to fail".into()))
+            }
+        }),
+    );
+
+    run_test(
+        "tamper_detection",
+        Box::new(|| {
+            let in_path = std::env::temp_dir().join("lvau_test_in_t.bin");
+            let enc_path = std::env::temp_dir().join("lvau_test_enc_t.lvau");
+            let dec_path = std::env::temp_dir().join("lvau_test_dec_t.bin");
+            let data = b"hello world password test";
+            fs::write(&in_path, data)?;
+
+            encrypt_file_password(
+                &in_path,
+                &enc_path,
+                Secret::new("testpass".into()),
+                None,
+                SecurityProfile::Fast,
+                None,
+            )?;
+
+            let mut enc_data = fs::read(&enc_path)?;
+            let len = enc_data.len();
+            if len > 0 {
+                enc_data[len - 1] ^= 1; // flip a bit in ciphertext
+            }
+            fs::write(&enc_path, enc_data)?;
+
+            let res = decrypt_file_password(
+                &enc_path,
+                &dec_path,
+                Secret::new("testpass".into()),
+                None,
+                None,
+            );
+
+            let _ = fs::remove_file(&in_path);
+            let _ = fs::remove_file(&enc_path);
+            let _ = fs::remove_file(&dec_path);
+
+            if res.is_err() {
+                Ok(())
+            } else {
+                Err(CliError::Message(
+                    "Expected tamper detection to fail".into(),
+                ))
+            }
+        }),
+    );
+
+    run_test(
+        "streaming_large_file",
+        Box::new(|| {
+            let in_path = std::env::temp_dir().join("lvau_test_in_lf.bin");
+            let enc_path = std::env::temp_dir().join("lvau_test_enc_lf.lvau");
+            let dec_path = std::env::temp_dir().join("lvau_test_dec_lf.bin");
+            let data = vec![0x42u8; 2_500_000]; // 2.5 MB to force multi-chunk
+            fs::write(&in_path, &data)?;
+
+            encrypt_file_password(
+                &in_path,
+                &enc_path,
+                Secret::new("testpass".into()),
+                None,
+                SecurityProfile::Fast,
+                None,
+            )?;
+            decrypt_file_password(
+                &enc_path,
+                &dec_path,
+                Secret::new("testpass".into()),
+                None,
+                None,
+            )?;
+
+            let dec_data = fs::read(&dec_path)?;
+            let _ = fs::remove_file(&in_path);
+            let _ = fs::remove_file(&enc_path);
+            let _ = fs::remove_file(&dec_path);
+
+            if dec_data == data {
+                Ok(())
+            } else {
+                Err(CliError::Message("Data mismatch on large file".into()))
+            }
+        }),
+    );
+
+    run_test(
+        "keypair_roundtrip",
+        Box::new(|| {
+            let in_path = std::env::temp_dir().join("lvau_test_in_kp.bin");
+            let enc_path = std::env::temp_dir().join("lvau_test_enc_kp.lvau");
+            let dec_path = std::env::temp_dir().join("lvau_test_dec_kp.bin");
+            let data = b"hello world keypair test";
+            fs::write(&in_path, data)?;
+
+            let (priv_key, pub_key) = generate_keypair();
+
+            encrypt_file_keypair(&in_path, &enc_path, &pub_key, SecurityProfile::Fast, None)?;
+            decrypt_file_keypair(&enc_path, &dec_path, &priv_key, None)?;
+
+            let dec_data = fs::read(&dec_path)?;
+            let _ = fs::remove_file(&in_path);
+            let _ = fs::remove_file(&enc_path);
+            let _ = fs::remove_file(&dec_path);
+
+            if dec_data == data {
+                Ok(())
+            } else {
+                Err(CliError::Message("Data mismatch".into()))
+            }
+        }),
+    );
+
+    println!("\nSelf-test summary: {} passed, {} failed", passed, failed);
+    if failed > 0 {
+        Err(CliError::Message("One or more self-tests failed".into()))
+    } else {
+        Ok(())
+    }
 }
 
 fn main() {

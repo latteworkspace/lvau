@@ -585,6 +585,132 @@ pub fn decrypt_file_password(
     Ok(())
 }
 
+pub fn verify_file_keypair(
+    in_path: &Path,
+    priv_key: &HybridPrivateKey,
+    progress_callback: Option<&mut dyn FnMut(u64)>,
+) -> Result<(), CryptoError> {
+    info!("Starting verification of {}", in_path.display());
+    let mut reader = File::open(in_path)?;
+    let envelope = read_envelope(&mut reader)?;
+
+    let recipient = envelope
+        .header
+        .recipients
+        .iter()
+        .find(|r| matches!(r, Recipient::X25519MlkemHybrid { .. }))
+        .ok_or(CryptoError::DecryptionFailed)?;
+
+    let fek = if let Recipient::X25519MlkemHybrid {
+        ephemeral_public_x25519,
+        mlkem_ciphertext,
+        encrypted_file_key,
+    } = recipient
+    {
+        let ephem_pub = X25519PublicKey::from(*ephemeral_public_x25519);
+        let x25519_ss = priv_key.x25519.diffie_hellman(&ephem_pub);
+
+        let mlkem_ct = mlkem_ciphertext
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::DecryptionFailed)?;
+        let mlkem_ss = priv_key.mlkem.decapsulate(&mlkem_ct);
+
+        let mut combined_ss = Vec::new();
+        combined_ss.extend_from_slice(x25519_ss.as_bytes());
+        combined_ss.extend_from_slice(mlkem_ss.as_slice());
+
+        let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
+        let mut kwk = Zeroizing::new([0u8; 32]);
+        kw_hk
+            .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
+            .map_err(|_| CryptoError::DecryptionFailed)?;
+
+        let wrap_nonce = [0u8; 24];
+        unwrap_key_xchacha(encrypted_file_key, &kwk, &wrap_nonce)?
+    } else {
+        return Err(CryptoError::DecryptionFailed);
+    };
+
+    let hk = Hkdf::<Sha256>::new(None, &fek);
+
+    info!("Verifying payload integrity without writing to disk");
+    let mut sink = std::io::sink();
+    stream_decrypt_payload(
+        &envelope.header.algorithm,
+        &mut reader,
+        &mut sink,
+        &hk,
+        &envelope.nonce,
+        envelope.secondary_nonce,
+        &envelope.aad_hash,
+        envelope.plaintext_len,
+        progress_callback,
+    )?;
+
+    Ok(())
+}
+
+pub fn verify_file_password(
+    input_path: &Path,
+    password: Secret<String>,
+    seed: Option<Secret<String>>,
+    progress_callback: Option<&mut dyn FnMut(u64)>,
+) -> Result<(), CryptoError> {
+    info!("Starting verification of {}", input_path.display());
+    let mut reader = File::open(input_path)?;
+    let envelope = read_envelope(&mut reader)?;
+
+    let kdf = envelope
+        .header
+        .kdf
+        .as_ref()
+        .ok_or(CryptoError::MissingKdfParams)?;
+
+    let master_key = derive_master_key(&password, seed.as_ref(), kdf)?;
+
+    let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
+    let mut kwk = Zeroizing::new([0u8; 32]);
+    kw_hk
+        .expand(b"Lvau-Key-Wrap", &mut *kwk)
+        .map_err(|_| CryptoError::DecryptionFailed)?;
+
+    let recipient = envelope
+        .header
+        .recipients
+        .iter()
+        .find(|r| matches!(r, Recipient::Password { .. }))
+        .ok_or(CryptoError::DecryptionFailed)?;
+
+    let fek = if let Recipient::Password {
+        nonce,
+        encrypted_file_key,
+    } = recipient
+    {
+        unwrap_key_xchacha(encrypted_file_key, &kwk, nonce)?
+    } else {
+        return Err(CryptoError::DecryptionFailed);
+    };
+
+    let hk = Hkdf::<Sha256>::new(None, &fek);
+
+    info!("Verifying payload integrity without writing to disk");
+    let mut sink = std::io::sink();
+    stream_decrypt_payload(
+        &envelope.header.algorithm,
+        &mut reader,
+        &mut sink,
+        &hk,
+        &envelope.nonce,
+        envelope.secondary_nonce,
+        &envelope.aad_hash,
+        envelope.plaintext_len,
+        progress_callback,
+    )?;
+
+    Ok(())
+}
+
 pub fn inspect_envelope(input_path: &Path) -> Result<EnvelopeHeader, CryptoError> {
     let mut reader = File::open(input_path)?;
     let envelope = read_envelope(&mut reader)?;

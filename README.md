@@ -36,7 +36,7 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 
 ## Experimental Features
 
-These are available, but should be treated as experimental in v0.1.0:
+These are available, but should be treated as experimental in v0.2.1:
 
 - Hybrid keypair encryption using X25519 + ML-KEM-768.
 - Cascade profiles (`paranoid`, `extreme`).
@@ -74,10 +74,13 @@ Binaries are written to `target/release/`.
 lvau-cli <COMMAND> [OPTIONS]
 
 Commands:
-  encrypt   Encrypt a file
-  decrypt   Decrypt a file
-  inspect   Inspect public envelope metadata
-  keygen    Generate an experimental hybrid keypair
+  encrypt     Encrypt a file
+  decrypt     Decrypt a file
+  inspect     Inspect public envelope metadata
+  keygen      Generate an experimental hybrid keypair
+  verify      Verify file integrity without writing plaintext to disk
+  self-test   Run built-in integration tests
+  doctor      Print environment diagnostics
 ```
 
 Encrypt with a password:
@@ -96,6 +99,12 @@ Inspect without decrypting:
 
 ```sh
 lvau-cli inspect --in-file document.pdf.lvau
+```
+
+Verify integrity without decrypting to disk:
+
+```sh
+lvau-cli verify --in-file document.pdf.lvau --password
 ```
 
 Choose a profile:
@@ -124,7 +133,7 @@ Use `--force` to replace existing output files. Without `--force`, Lvau refuses 
 
 ## GUI
 
-`lvau-gui` provides file selection, password or keypair mode, profile selection, status output, and logs. It is useful for local manual workflows, but CLI reliability is the primary v0.1.0 focus.
+`lvau-gui` provides file selection, password or keypair mode, profile selection, status output, and logs. It is useful for local manual workflows, but CLI reliability is the primary focus.
 
 ```sh
 cargo run --release --package lvau-gui
@@ -142,17 +151,11 @@ Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on Lvau.
 
 ## File Format
 
-`.lvau` files are postcard-serialized envelopes with:
+Lvau uses a streaming architecture for large file support. `.lvau` files consist of:
 
-- magic bytes `LVAU`
-- format version `1`
-- algorithm and profile identifiers
-- Argon2id KDF parameters for password mode
-- recipient data for keypair mode
-- XChaCha20-Poly1305 nonce and optional AES-GCM nonce
-- authenticated header hash used as AEAD AAD
-- plaintext length for truncation detection
-- ciphertext chunks
+- 4-byte envelope length prefix (little-endian)
+- postcard-serialized envelope (magic bytes, version, metadata, nonces, authenticated AAD hash, total plaintext length)
+- Encrypted ciphertext chunks (1 MiB default size)
 
 The `.lvau` format is not stable before v1.0. See [docs/FORMAT.md](docs/FORMAT.md).
 

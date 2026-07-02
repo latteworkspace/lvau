@@ -6,7 +6,13 @@ This document describes the `.lvau` format implemented by `lvau-protocol` and `l
 
 ## Encoding
 
-A `.lvau` file is one postcard-serialized `Envelope` value. Postcard is compact and version-sensitive, so the byte layout is tied to the Rust data structures and postcard version used by Lvau v0.1.0.
+Lvau uses a streaming architecture for large file support. A `.lvau` file consists of:
+
+1. A 4-byte little-endian unsigned integer (`u32`) representing the length of the serialized `Envelope` header.
+2. The postcard-serialized `Envelope` value.
+3. The concatenated encrypted payload chunks.
+
+Postcard is compact and version-sensitive, so the byte layout is tied to the Rust data structures and postcard version used by Lvau.
 
 ## Envelope Fields
 
@@ -17,10 +23,11 @@ pub struct Envelope {
     pub nonce: [u8; 24],
     pub secondary_nonce: Option<[u8; 12]>,
     pub aad_hash: [u8; 32],
-    pub ciphertext: Vec<u8>,
     pub metadata: Vec<u8>,
 }
 ```
+
+(Note: `ciphertext` is no longer stored in the `Envelope` struct; chunks are streamed directly to the file after the envelope.)
 
 ### Header
 
@@ -42,7 +49,7 @@ pub struct EnvelopeHeader {
 - `kdf`: Argon2id parameters for password encryption, absent for keypair encryption
 - `recipients`: password marker or experimental hybrid keypair recipient data
 
-The postcard-serialized header is hashed with SHA-256. The resulting `aad_hash` is passed as AEAD additional authenticated data for every encrypted chunk. Decryptors recompute the hash and reject mismatches before payload decryption.
+The postcard-serialized header is hashed with SHA-256. The resulting `aad_hash` is passed as AEAD additional authenticated data for every encrypted chunk, along with the global chunk index. Decryptors recompute the hash and reject mismatches before payload decryption.
 
 ### Plaintext Length
 
@@ -88,13 +95,16 @@ Payloads are split into 1 MiB chunks.
 | `CascadeAesGcmXChaCha` | `paranoid` | 32 bytes |
 | `TripleCascadeAesXChaChaLco` | `extreme` | 32 bytes |
 
-Each chunk is independently authenticated. The header hash is used as AAD for each chunk.
+Each chunk is independently authenticated. The AAD for each chunk consists of the header `aad_hash` appended with the 64-bit little-endian global chunk index. This prevents chunk reordering or swapping.
 
 ### Recipients
 
 ```rust
 pub enum Recipient {
-    Password,
+    Password {
+        nonce: [u8; 24],
+        encrypted_file_key: Vec<u8>,
+    },
     X25519MlkemHybrid {
         ephemeral_public_x25519: [u8; 32],
         mlkem_ciphertext: Vec<u8>,
@@ -103,7 +113,7 @@ pub enum Recipient {
 }
 ```
 
-`Password` indicates password-derived encryption. `X25519MlkemHybrid` is experimental and combines X25519 and ML-KEM-768 shared secrets through HKDF.
+`Password` indicates password-derived encryption where the FEK (File Encryption Key) is wrapped with XChaCha20-Poly1305. `X25519MlkemHybrid` is experimental and combines X25519 and ML-KEM-768 shared secrets through HKDF.
 
 ## Compatibility Policy
 
@@ -121,8 +131,3 @@ After v1.0, format compatibility should follow semantic versioning.
 - Lvau does not use custom ciphers as a security boundary.
 - The `extreme` profile includes LCO obfuscation. LCO is not a cryptographic security boundary.
 - Public metadata includes algorithm, profile, KDF parameters, recipients, nonce values, ciphertext length, and plaintext length.
-
-## Known Limitations (v0.1.0)
-
-- **Chunk index not in AAD**: Each chunk uses the header hash as AEAD AAD, but the chunk index is not included. Chunk reordering within a file would be detected by the plaintext length check and by nonce-derived chunk boundaries, but adding the chunk index to AAD would provide a stronger guarantee. This is planned for v0.2.0.
-- **Entire files in memory**: Lvau currently reads entire files into memory before encryption or decryption.

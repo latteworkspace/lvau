@@ -40,7 +40,7 @@ A formal audit is a goal for future releases.
 
 ## Key file permissions
 
-Lvau writes private key files with mode `0600` on Unix platforms where this is supported. Windows-specific ACL hardening is not implemented in v0.1.0; store `.lvau-key` files in a directory protected by your Windows account permissions.
+Lvau writes private key files with mode `0600` on Unix platforms where this is supported. On Windows, ACL hardening is implemented to ensure only the owner can read or write the `.lvau-key` file via `SetNamedSecurityInfoW`.
 
 ## Expected response
 
