@@ -42,9 +42,9 @@ fn set_windows_acl(path: &Path) -> Result<(), std::io::Error> {
     use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HANDLE};
     use windows_sys::Win32::Security::{
         Authorization::SetEntriesInAclW, Authorization::SetNamedSecurityInfoW,
-        Authorization::EXPLICIT_ACCESS_W, Authorization::SET_ACCESS, GetTokenInformation,
-        TokenUser, DACL_SECURITY_INFORMATION, NO_INHERITANCE, SE_FILE_OBJECT, TOKEN_QUERY,
-        TRUSTEE_IS_SID, TRUSTEE_IS_USER,
+        Authorization::EXPLICIT_ACCESS_W, Authorization::SET_ACCESS,
+        Authorization::SE_FILE_OBJECT, Authorization::TRUSTEE_IS_SID, Authorization::TRUSTEE_IS_USER,
+        GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION, NO_INHERITANCE, TOKEN_QUERY,
     };
     use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
