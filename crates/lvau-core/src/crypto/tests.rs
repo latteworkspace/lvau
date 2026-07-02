@@ -1,6 +1,6 @@
-use super::*;
 use super::keys::generate_keypair;
 use super::parallel::CHUNK_SIZE;
+use super::*;
 use lvau_protocol::envelope::Envelope;
 use secrecy::Secret;
 use sha2::{Digest, Sha256};
@@ -106,7 +106,15 @@ fn modified_ciphertext_fails() {
     let password = Secret::new("password123".to_string());
 
     fs::write(&input, b"Data to be tampered").unwrap();
-    encrypt_file_password(&input, &enc, password.clone(), None, SecurityProfile::Fast, None).unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+    )
+    .unwrap();
 
     let mut data = fs::read(&enc).unwrap();
     *data.last_mut().unwrap() ^= 0xFF;
@@ -124,22 +132,30 @@ fn modified_header_aad_fails() {
     let password = Secret::new("password123".to_string());
 
     fs::write(&input, b"header-bound data").unwrap();
-    encrypt_file_password(&input, &enc, password.clone(), None, SecurityProfile::Fast, None).unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+    )
+    .unwrap();
 
     // Read the streaming format: 4 bytes length, then envelope, then payload.
-    let mut data = fs::read(&enc).unwrap();
+    let data = fs::read(&enc).unwrap();
     let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    let mut envelope: Envelope = postcard::from_bytes(&data[4..4+env_len]).unwrap();
+    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
     envelope.header.profile = SecurityProfile::Archive;
-    
+
     let new_env_bytes = postcard::to_allocvec(&envelope).unwrap();
     let new_len = new_env_bytes.len() as u32;
-    
+
     let mut new_data = Vec::new();
     new_data.extend_from_slice(&new_len.to_le_bytes());
     new_data.extend_from_slice(&new_env_bytes);
-    new_data.extend_from_slice(&data[4+env_len..]);
-    
+    new_data.extend_from_slice(&data[4 + env_len..]);
+
     fs::write(&enc, new_data).unwrap();
 
     let result = decrypt_file_password(&enc, &dec, password, None, None);
@@ -152,10 +168,20 @@ fn truncated_file_fails() {
     let enc = unique_path("truncated.lvau");
     let dec = unique_path("truncated.output");
     let password = Secret::new("password123".to_string());
-    let bytes: Vec<u8> = (0..(CHUNK_SIZE * 2 + 11)).map(|i| (i % 251) as u8).collect();
+    let bytes: Vec<u8> = (0..(CHUNK_SIZE * 2 + 11))
+        .map(|i| (i % 251) as u8)
+        .collect();
 
     fs::write(&input, bytes).unwrap();
-    encrypt_file_password(&input, &enc, password.clone(), None, SecurityProfile::Fast, None).unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+    )
+    .unwrap();
 
     let file = std::fs::OpenOptions::new().write(true).open(&enc).unwrap();
     let len = file.metadata().unwrap().len();

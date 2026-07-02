@@ -4,7 +4,7 @@ use eframe::egui;
 use log::{LevelFilter, Log, Metadata, Record};
 use lvau_core::crypto::{
     decrypt_file_keypair, decrypt_file_password, encrypt_file_keypair, encrypt_file_password,
-    keys::{HybridPrivateKey, HybridPublicKey, generate_keypair},
+    keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
 };
 use lvau_protocol::envelope::SecurityProfile;
 use secrecy::Secret;
@@ -281,22 +281,17 @@ impl eframe::App for LvauGuiApp {
                                             exe_dir.display()
                                         );
                                         std::fs::remove_file(&temp_out).ok();
-                                    } else if let Err(e) =
-                                        std::fs::copy(&stub_path, &out_path)
-                                    {
+                                    } else if let Err(e) = std::fs::copy(&stub_path, &out_path) {
                                         self.status = format!("SFX Copy Error: {:?}", e);
                                     } else {
                                         let mut out_f = std::fs::OpenOptions::new()
                                             .append(true)
                                             .open(&out_path)
                                             .unwrap();
-                                        let payload_bytes =
-                                            std::fs::read(&temp_out).unwrap();
+                                        let payload_bytes = std::fs::read(&temp_out).unwrap();
                                         out_f.write_all(&payload_bytes).unwrap();
                                         let payload_len = payload_bytes.len() as u64;
-                                        out_f
-                                            .write_all(&payload_len.to_le_bytes())
-                                            .unwrap();
+                                        out_f.write_all(&payload_len.to_le_bytes()).unwrap();
                                         out_f.write_all(b"LVAUSFX1").unwrap();
                                         self.status = format!(
                                             "Success: SFX Output saved to {}",
@@ -305,10 +300,8 @@ impl eframe::App for LvauGuiApp {
                                         std::fs::remove_file(&temp_out).ok();
                                     }
                                 } else {
-                                    self.status = format!(
-                                        "Success: Output saved to {}",
-                                        out_path.display()
-                                    );
+                                    self.status =
+                                        format!("Success: Output saved to {}", out_path.display());
                                 }
                             }
                             Err(e) => {

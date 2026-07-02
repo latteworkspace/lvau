@@ -1,9 +1,6 @@
-use argon2::{
-    password_hash::rand_core::OsRng,
-    Argon2, Params,
-};
-use rand_core::RngCore;
 use super::CryptoError;
+use argon2::{password_hash::rand_core::OsRng, Argon2, Params};
+use rand_core::RngCore;
 
 pub struct PasswordAuth;
 
@@ -22,13 +19,10 @@ impl PasswordAuth {
             Params::DEFAULT_T_COST,
             Params::DEFAULT_P_COST,
             Some(32),
-        ).map_err(|_| CryptoError::EncryptionFailed)?;
-        
-        let argon2 = Argon2::new(
-            argon2::Algorithm::Argon2id,
-            argon2::Version::V0x13,
-            params,
-        );
+        )
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+
+        let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
         let mut key = [0u8; 32];
         match argon2.hash_password_into(password.as_bytes(), salt, &mut key) {

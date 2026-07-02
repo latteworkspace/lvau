@@ -38,17 +38,16 @@ pub struct HybridPrivateKey {
 #[cfg(windows)]
 fn set_windows_acl(path: &Path) -> Result<(), std::io::Error> {
     use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HANDLE};
     use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, TOKEN_QUERY,
-        Authorization::SetNamedSecurityInfoW, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-        Authorization::EXPLICIT_ACCESS_W, Authorization::SET_ACCESS, NO_INHERITANCE,
-        Authorization::SetEntriesInAclW,
+        Authorization::SetEntriesInAclW, Authorization::SetNamedSecurityInfoW,
+        Authorization::EXPLICIT_ACCESS_W, Authorization::SET_ACCESS, GetTokenInformation,
+        TokenUser, DACL_SECURITY_INFORMATION, NO_INHERITANCE, SE_FILE_OBJECT, TOKEN_QUERY,
         TRUSTEE_IS_SID, TRUSTEE_IS_USER,
     };
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    use windows_sys::Win32::Foundation::{HANDLE, LocalFree, ERROR_SUCCESS};
     use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
-    use std::ptr::null_mut;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
         let mut token: HANDLE = 0;
@@ -58,7 +57,7 @@ fn set_windows_acl(path: &Path) -> Result<(), std::io::Error> {
 
         let mut ret_len = 0;
         GetTokenInformation(token, TokenUser, null_mut(), 0, &mut ret_len);
-        
+
         let mut token_user_buf = vec![0u8; ret_len as usize];
         if GetTokenInformation(
             token,
@@ -66,11 +65,13 @@ fn set_windows_acl(path: &Path) -> Result<(), std::io::Error> {
             token_user_buf.as_mut_ptr() as *mut core::ffi::c_void,
             ret_len,
             &mut ret_len,
-        ) == 0 {
+        ) == 0
+        {
             return Err(std::io::Error::last_os_error());
         }
 
-        let token_user = &*(token_user_buf.as_ptr() as *const windows_sys::Win32::Security::TOKEN_USER);
+        let token_user =
+            &*(token_user_buf.as_ptr() as *const windows_sys::Win32::Security::TOKEN_USER);
         let user_sid = token_user.User.Sid;
 
         let mut ea = std::mem::zeroed::<EXPLICIT_ACCESS_W>();

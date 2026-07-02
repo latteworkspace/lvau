@@ -354,12 +354,25 @@ fn run() -> Result<(), CliError> {
 
             if let Some(pub_path) = pub_key {
                 let pk = HybridPublicKey::load_from_file(&pub_path)?;
-                encrypt_file_keypair(&in_file, &temp_out, &pk, sec_profile, Some(&mut progress_callback))?;
+                encrypt_file_keypair(
+                    &in_file,
+                    &temp_out,
+                    &pk,
+                    sec_profile,
+                    Some(&mut progress_callback),
+                )?;
             } else {
                 let pwd = password_secret(password, password_file.as_deref(), true)?
                     .ok_or_else(|| CliError::Message("Missing password".into()))?;
                 let seed_val = seed_secret(seed, seed_file.as_deref())?;
-                encrypt_file_password(&in_file, &temp_out, pwd, seed_val, sec_profile, Some(&mut progress_callback))?;
+                encrypt_file_password(
+                    &in_file,
+                    &temp_out,
+                    pwd,
+                    seed_val,
+                    sec_profile,
+                    Some(&mut progress_callback),
+                )?;
             }
             pb.finish_and_clear();
 
@@ -400,7 +413,13 @@ fn run() -> Result<(), CliError> {
                 let pwd = password_secret(password, password_file.as_deref(), false)?
                     .ok_or_else(|| CliError::Message("Missing password".into()))?;
                 let seed_val = seed_secret(seed, seed_file.as_deref())?;
-                decrypt_file_password(&in_file, &out_file, pwd, seed_val, Some(&mut progress_callback))?;
+                decrypt_file_password(
+                    &in_file,
+                    &out_file,
+                    pwd,
+                    seed_val,
+                    Some(&mut progress_callback),
+                )?;
             }
             pb.finish_and_clear();
 
@@ -410,7 +429,10 @@ fn run() -> Result<(), CliError> {
             ensure_input_file(&in_file)?;
             let header = inspect_envelope(&in_file)?;
             println!("Lvau envelope metadata");
-            println!("Magic:     {}", std::str::from_utf8(&header.magic).unwrap_or("????"));
+            println!(
+                "Magic:     {}",
+                std::str::from_utf8(&header.magic).unwrap_or("????")
+            );
             println!("Version:   {}", header.version);
             println!("Profile:   {:?}", header.profile);
             println!("Algorithm: {:?}", header.algorithm);
@@ -421,7 +443,10 @@ fn run() -> Result<(), CliError> {
                     p_cost,
                     ..
                 }) => {
-                    println!("KDF:       Argon2id (m={} KiB, t={}, p={})", m_cost, t_cost, p_cost);
+                    println!(
+                        "KDF:       Argon2id (m={} KiB, t={}, p={})",
+                        m_cost, t_cost, p_cost
+                    );
                 }
                 None => {
                     println!("KDF:       None (keypair-based)");

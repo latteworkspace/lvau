@@ -5,10 +5,13 @@ pub mod password;
 
 use parallel::{stream_decrypt_payload, stream_encrypt_payload};
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 use keys::{HybridPrivateKey, HybridPublicKey};
 use ml_kem::{Decapsulate, Encapsulate};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, XChaCha20Poly1305, XNonce};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
@@ -116,7 +119,13 @@ fn wrap_key_xchacha(
     let cipher = XChaCha20Poly1305::new(wrapping_key.into());
     let nonce = XNonce::from_slice(nonce_bytes);
     cipher
-        .encrypt(nonce, Payload { msg: key_to_wrap, aad: &[] })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: key_to_wrap,
+                aad: &[],
+            },
+        )
         .map_err(|_| CryptoError::EncryptionFailed)
 }
 
@@ -128,7 +137,13 @@ fn unwrap_key_xchacha(
     let cipher = XChaCha20Poly1305::new(wrapping_key.into());
     let nonce = XNonce::from_slice(nonce_bytes);
     cipher
-        .decrypt(nonce, Payload { msg: wrapped_key, aad: &[] })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: wrapped_key,
+                aad: &[],
+            },
+        )
         .map_err(|_| CryptoError::DecryptionFailed)
 }
 
@@ -160,7 +175,7 @@ fn write_envelope_and_payload(
         let mut file = File::create(&tmp_path)?;
         let encoded_envelope = postcard::to_allocvec(envelope)?;
         let env_len = encoded_envelope.len() as u32;
-        
+
         file.write_all(&env_len.to_le_bytes())?;
         file.write_all(&encoded_envelope)?;
 
@@ -174,7 +189,7 @@ fn write_envelope_and_payload(
             &envelope.aad_hash,
             progress_callback,
         )?;
-        
+
         file.sync_all()?;
     }
 
@@ -192,14 +207,14 @@ fn read_envelope(reader: &mut dyn Read) -> Result<Envelope, CryptoError> {
     if env_len > 1024 * 1024 {
         return Err(CryptoError::Validation("Envelope too large"));
     }
-    
+
     let mut env_bytes = vec![0u8; env_len];
     reader.read_exact(&mut env_bytes)?;
-    
+
     let envelope: Envelope = postcard::from_bytes(&env_bytes)?;
     envelope.validate().map_err(CryptoError::Validation)?;
     verify_aad_hash(&envelope)?;
-    
+
     Ok(envelope)
 }
 
@@ -246,12 +261,14 @@ pub fn encrypt_file_password(
     // Derive Key Wrapping Key
     let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk.expand(b"Lvau-Key-Wrap", &mut *kwk).map_err(|_| CryptoError::EncryptionFailed)?;
+    kw_hk
+        .expand(b"Lvau-Key-Wrap", &mut *kwk)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
 
     // Generate FEK (File Encryption Key)
     let mut fek = Zeroizing::new([0u8; 32]);
     rng.fill_bytes(&mut *fek);
-    
+
     let mut wrap_nonce = [0u8; 24];
     rng.fill_bytes(&mut wrap_nonce);
     let encrypted_file_key = wrap_key_xchacha(&*fek, &kwk, &wrap_nonce)?;
@@ -293,8 +310,18 @@ pub fn encrypt_file_password(
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
 
-    info!("Writing encrypted envelope and streaming to {}", output_path.display());
-    write_envelope_and_payload(output_path, &envelope, &algorithm, &hk, &mut reader, progress_callback)?;
+    info!(
+        "Writing encrypted envelope and streaming to {}",
+        output_path.display()
+    );
+    write_envelope_and_payload(
+        output_path,
+        &envelope,
+        &algorithm,
+        &hk,
+        &mut reader,
+        progress_callback,
+    )?;
 
     Ok(())
 }
@@ -333,7 +360,7 @@ pub fn encrypt_file_keypair(
         secondary_nonce_bytes = Some(sn);
     }
 
-    let ephem_x25519_priv = StaticSecret::random_from_rng(&mut rng);
+    let ephem_x25519_priv = StaticSecret::random_from_rng(rng);
     let ephem_x25519_pub = X25519PublicKey::from(&ephem_x25519_priv);
     let x25519_ss = ephem_x25519_priv.diffie_hellman(&recipient_pub.x25519);
 
@@ -345,12 +372,13 @@ pub fn encrypt_file_keypair(
 
     let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk.expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
+    kw_hk
+        .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let mut fek = Zeroizing::new([0u8; 32]);
     rng.fill_bytes(&mut *fek);
-    
+
     let wrap_nonce = [0u8; 24];
     let encrypted_file_key = wrap_key_xchacha(&*fek, &kwk, &wrap_nonce)?;
 
@@ -359,11 +387,11 @@ pub fn encrypt_file_keypair(
         version: CURRENT_VERSION,
         profile: profile.clone(),
         algorithm: algorithm.clone(),
-        kdf: None, 
+        kdf: None,
         recipients: vec![Recipient::X25519MlkemHybrid {
             ephemeral_public_x25519: ephem_x25519_pub.to_bytes(),
             mlkem_ciphertext: mlkem_ct.as_slice().to_vec(),
-            encrypted_file_key, 
+            encrypted_file_key,
         }],
     };
 
@@ -379,7 +407,14 @@ pub fn encrypt_file_keypair(
     };
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
-    write_envelope_and_payload(out_path, &envelope, &algorithm, &hk, &mut reader, progress_callback)?;
+    write_envelope_and_payload(
+        out_path,
+        &envelope,
+        &algorithm,
+        &hk,
+        &mut reader,
+        progress_callback,
+    )?;
     Ok(())
 }
 
@@ -467,7 +502,8 @@ pub fn decrypt_file_keypair(
 
         let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
         let mut kwk = Zeroizing::new([0u8; 32]);
-        kw_hk.expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
+        kw_hk
+            .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
             .map_err(|_| CryptoError::DecryptionFailed)?;
 
         // Wrap nonce for hybrid is derived from KWK, for simplicity we'll just use a zero nonce here because the wrapped key is unique per file
@@ -480,7 +516,14 @@ pub fn decrypt_file_keypair(
     };
 
     let hk = Hkdf::<Sha256>::new(None, &fek);
-    write_decrypted_payload_atomic(out_path, &envelope, &envelope.header.algorithm, &hk, &mut reader, progress_callback)?;
+    write_decrypted_payload_atomic(
+        out_path,
+        &envelope,
+        &envelope.header.algorithm,
+        &hk,
+        &mut reader,
+        progress_callback,
+    )?;
 
     Ok(())
 }
@@ -503,10 +546,12 @@ pub fn decrypt_file_password(
         .ok_or(CryptoError::MissingKdfParams)?;
 
     let master_key = derive_master_key(&password, seed.as_ref(), kdf)?;
-    
+
     let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk.expand(b"Lvau-Key-Wrap", &mut *kwk).map_err(|_| CryptoError::DecryptionFailed)?;
+    kw_hk
+        .expand(b"Lvau-Key-Wrap", &mut *kwk)
+        .map_err(|_| CryptoError::DecryptionFailed)?;
 
     let recipient = envelope
         .header
@@ -515,7 +560,11 @@ pub fn decrypt_file_password(
         .find(|r| matches!(r, Recipient::Password { .. }))
         .ok_or(CryptoError::DecryptionFailed)?;
 
-    let fek = if let Recipient::Password { nonce, encrypted_file_key } = recipient {
+    let fek = if let Recipient::Password {
+        nonce,
+        encrypted_file_key,
+    } = recipient
+    {
         unwrap_key_xchacha(encrypted_file_key, &kwk, nonce)?
     } else {
         return Err(CryptoError::DecryptionFailed);
@@ -524,8 +573,15 @@ pub fn decrypt_file_password(
     let hk = Hkdf::<Sha256>::new(None, &fek);
 
     info!("Streaming decrypted file to {}", output_path.display());
-    write_decrypted_payload_atomic(output_path, &envelope, &envelope.header.algorithm, &hk, &mut reader, progress_callback)?;
-    
+    write_decrypted_payload_atomic(
+        output_path,
+        &envelope,
+        &envelope.header.algorithm,
+        &hk,
+        &mut reader,
+        progress_callback,
+    )?;
+
     Ok(())
 }
 
@@ -543,20 +599,45 @@ pub fn decrypt_memory_password(
 ) -> Result<Vec<u8>, CryptoError> {
     let mut cursor = std::io::Cursor::new(encoded_envelope);
     let envelope = read_envelope(&mut cursor)?;
-    let kdf = envelope.header.kdf.as_ref().ok_or(CryptoError::MissingKdfParams)?;
+    let kdf = envelope
+        .header
+        .kdf
+        .as_ref()
+        .ok_or(CryptoError::MissingKdfParams)?;
     let master_key = derive_master_key(&password, seed.as_ref(), kdf)?;
     let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk.expand(b"Lvau-Key-Wrap", &mut *kwk).map_err(|_| CryptoError::DecryptionFailed)?;
-    let recipient = envelope.header.recipients.iter().find(|r| matches!(r, Recipient::Password { .. })).ok_or(CryptoError::DecryptionFailed)?;
-    let fek = if let Recipient::Password { nonce, encrypted_file_key } = recipient {
+    kw_hk
+        .expand(b"Lvau-Key-Wrap", &mut *kwk)
+        .map_err(|_| CryptoError::DecryptionFailed)?;
+    let recipient = envelope
+        .header
+        .recipients
+        .iter()
+        .find(|r| matches!(r, Recipient::Password { .. }))
+        .ok_or(CryptoError::DecryptionFailed)?;
+    let fek = if let Recipient::Password {
+        nonce,
+        encrypted_file_key,
+    } = recipient
+    {
         unwrap_key_xchacha(encrypted_file_key, &kwk, nonce)?
     } else {
         return Err(CryptoError::DecryptionFailed);
     };
     let hk = Hkdf::<Sha256>::new(None, &fek);
     let mut output = Vec::new();
-    stream_decrypt_payload(&envelope.header.algorithm, &mut cursor, &mut output, &hk, &envelope.nonce, envelope.secondary_nonce, &envelope.aad_hash, envelope.plaintext_len, None)?;
+    stream_decrypt_payload(
+        &envelope.header.algorithm,
+        &mut cursor,
+        &mut output,
+        &hk,
+        &envelope.nonce,
+        envelope.secondary_nonce,
+        &envelope.aad_hash,
+        envelope.plaintext_len,
+        None,
+    )?;
     Ok(output)
 }
 
@@ -566,18 +647,33 @@ pub fn decrypt_memory_keypair(
 ) -> Result<Vec<u8>, CryptoError> {
     let mut cursor = std::io::Cursor::new(data);
     let envelope = read_envelope(&mut cursor)?;
-    let recipient = envelope.header.recipients.iter().find(|r| matches!(r, Recipient::X25519MlkemHybrid { .. })).ok_or(CryptoError::DecryptionFailed)?;
-    let fek = if let Recipient::X25519MlkemHybrid { ephemeral_public_x25519, mlkem_ciphertext, encrypted_file_key } = recipient {
+    let recipient = envelope
+        .header
+        .recipients
+        .iter()
+        .find(|r| matches!(r, Recipient::X25519MlkemHybrid { .. }))
+        .ok_or(CryptoError::DecryptionFailed)?;
+    let fek = if let Recipient::X25519MlkemHybrid {
+        ephemeral_public_x25519,
+        mlkem_ciphertext,
+        encrypted_file_key,
+    } = recipient
+    {
         let ephem_pub = X25519PublicKey::from(*ephemeral_public_x25519);
         let x25519_ss = priv_key.x25519.diffie_hellman(&ephem_pub);
-        let mlkem_ct = mlkem_ciphertext.as_slice().try_into().map_err(|_| CryptoError::DecryptionFailed)?;
+        let mlkem_ct = mlkem_ciphertext
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::DecryptionFailed)?;
         let mlkem_ss = priv_key.mlkem.decapsulate(&mlkem_ct);
         let mut combined_ss = Vec::new();
         combined_ss.extend_from_slice(x25519_ss.as_bytes());
         combined_ss.extend_from_slice(mlkem_ss.as_slice());
         let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
         let mut kwk = Zeroizing::new([0u8; 32]);
-        kw_hk.expand(b"Lvau-Hybrid-Wrap", &mut *kwk).map_err(|_| CryptoError::DecryptionFailed)?;
+        kw_hk
+            .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
+            .map_err(|_| CryptoError::DecryptionFailed)?;
         let wrap_nonce = [0u8; 24];
         unwrap_key_xchacha(encrypted_file_key, &kwk, &wrap_nonce)?
     } else {
@@ -585,7 +681,17 @@ pub fn decrypt_memory_keypair(
     };
     let hk = Hkdf::<Sha256>::new(None, &fek);
     let mut output = Vec::new();
-    stream_decrypt_payload(&envelope.header.algorithm, &mut cursor, &mut output, &hk, &envelope.nonce, envelope.secondary_nonce, &envelope.aad_hash, envelope.plaintext_len, None)?;
+    stream_decrypt_payload(
+        &envelope.header.algorithm,
+        &mut cursor,
+        &mut output,
+        &hk,
+        &envelope.nonce,
+        envelope.secondary_nonce,
+        &envelope.aad_hash,
+        envelope.plaintext_len,
+        None,
+    )?;
     Ok(output)
 }
 
