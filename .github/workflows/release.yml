@@ -25,7 +25,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
             exe: ".exe"
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
             exe: ""
