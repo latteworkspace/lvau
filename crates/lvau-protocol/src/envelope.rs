@@ -35,7 +35,10 @@ pub enum KdfParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Recipient {
-    Password, // indicates the file uses KdfParams to derive key
+    Password {
+        nonce: [u8; 24],
+        encrypted_file_key: Vec<u8>,
+    }, // indicates the file uses KdfParams to derive key which wraps the FEK
     X25519MlkemHybrid {
         ephemeral_public_x25519: [u8; 32],
         mlkem_ciphertext: Vec<u8>,
@@ -56,10 +59,10 @@ pub struct EnvelopeHeader {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub header: EnvelopeHeader,
+    pub plaintext_len: u64,
     pub nonce: [u8; 24],
     pub secondary_nonce: Option<[u8; 12]>,
     pub aad_hash: [u8; 32],
-    pub ciphertext: Vec<u8>,
     pub metadata: Vec<u8>, // encrypted or minimal public metadata
 }
 

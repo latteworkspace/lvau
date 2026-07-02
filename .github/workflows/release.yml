@@ -9,14 +9,10 @@ on:
 permissions:
   contents: write
 
-env:
-  BIN_NAME: lvau-cli
-
 jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-
     strategy:
       fail-fast: false
       matrix:
@@ -24,22 +20,19 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-            bin_ext: ""
-
+            exe: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
-            bin_ext: ".exe"
-
-          - os: macos-latest
+            exe: ".exe"
+          - os: macos-13
             target: x86_64-apple-darwin
             archive: tar.gz
-            bin_ext: ""
-
+            exe: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-            bin_ext: ""
+            exe: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -50,29 +43,37 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build CLI
-        run: cargo build --release --target ${{ matrix.target }} --package lvau-cli
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --package lvau-cli --package lvau-gui --package lvau-stub
+
+      - name: Stage binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/lvau-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/lvau-cli${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
+          cp "target/${{ matrix.target }}/release/lvau-gui${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
+          cp "target/${{ matrix.target }}/release/lvau-stub${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
+          cp README.md LICENSE "dist/lvau-${{ matrix.target }}/"
 
       - name: Package Unix
         if: matrix.archive == 'tar.gz'
         shell: bash
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.bin_ext }} dist/
-          tar -czf ${{ env.BIN_NAME }}-${{ matrix.target }}.tar.gz -C dist ${{ env.BIN_NAME }}${{ matrix.bin_ext }}
+        run: tar -czf "lvau-${{ matrix.target }}.tar.gz" -C dist "lvau-${{ matrix.target }}"
 
       - name: Package Windows
         if: matrix.archive == 'zip'
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist
-          Copy-Item "target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.bin_ext }}" dist/
-          Compress-Archive -Path "dist/*" -DestinationPath "${{ env.BIN_NAME }}-${{ matrix.target }}.zip"
+        run: Compress-Archive -Path "dist/lvau-${{ matrix.target }}" -DestinationPath "lvau-${{ matrix.target }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          name: lvau-${{ matrix.target }}
           path: |
             *.zip
             *.tar.gz
@@ -81,8 +82,9 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -91,12 +93,13 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: |
+          set -euo pipefail
           cd artifacts
-          sha256sum *.tar.gz *.zip 2>/dev/null | tee checksums.txt
+          sha256sum *.tar.gz *.zip > checksums.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: docs/V0_1_0_RELEASE_NOTES_DRAFT.md
           files: |
             artifacts/*
-          generate_release_notes: true

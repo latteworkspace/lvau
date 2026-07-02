@@ -38,6 +38,10 @@ Lvau has **not been formally audited** by a third-party security firm. The crypt
 
 A formal audit is a goal for future releases.
 
+## Key file permissions
+
+Lvau writes private key files with mode `0600` on Unix platforms where this is supported. Windows-specific ACL hardening is not implemented in v0.1.0; store `.lvau-key` files in a directory protected by your Windows account permissions.
+
 ## Expected response
 
 - We aim to acknowledge reports within **7 days**

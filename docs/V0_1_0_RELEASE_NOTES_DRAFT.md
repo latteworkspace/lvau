@@ -1,79 +1,55 @@
-# v0.1.0 — Boring, inspectable file encryption
+# v0.1.0 - Boring, Inspectable File Encryption
 
-Lvau is a file encryption toolkit built in Rust around standard cryptographic primitives and a versioned `.lvau` envelope format.
+Lvau v0.1.0 is the first public release candidate for a Rust-based local file encryption toolkit.
 
-This is the first public release.
+## Highlights
 
-## What Lvau does
+- `lvau-cli` with `encrypt`, `decrypt`, `inspect`, and `keygen`
+- XChaCha20-Poly1305 AEAD for the default encryption path
+- Argon2id password derivation with configurable profiles
+- HKDF-SHA256 key separation
+- Versioned `.lvau` envelope with inspectable public metadata
+- Header authentication data checks and plaintext length validation
+- Refusal to overwrite output files unless `--force` is supplied
+- Native `lvau-gui`
+- Experimental X25519 + ML-KEM-768 keypair encryption
+- Experimental Windows SFX support through `lvau-stub`
 
-- Encrypts and decrypts individual files with a password or hybrid keypair
-- Uses **XChaCha20-Poly1305** (AEAD) as the default encryption algorithm
-- Derives keys from passwords using **Argon2id** with configurable cost profiles
-- Separates keys via **HKDF-SHA256**
-- Writes a versioned `.lvau` envelope that can be inspected without decrypting the payload
-- Processes large files in parallel 1 MB chunks
+## Release Assets
 
-## What works
+- `lvau-x86_64-unknown-linux-gnu.tar.gz`
+- `lvau-x86_64-pc-windows-msvc.zip`
+- `lvau-x86_64-apple-darwin.tar.gz`
+- `lvau-aarch64-apple-darwin.tar.gz`
+- `checksums.txt`
 
-- `lvau-cli`: command-line interface for encrypt, decrypt, inspect, and keypair generation
-- `lvau-gui`: cross-platform native GUI (egui)
-- Security profiles: `fast`, `balanced`, `archive`, `paranoid`
-- Hybrid keypair encryption: X25519 + ML-KEM-768 (experimental)
-- Self-extracting archives (Windows SFX)
-- 4 automated tests: roundtrip, wrong password, tampered ciphertext, cascade with seed
+Each archive includes `lvau-cli`, `lvau-gui`, `lvau-stub`, `README.md`, and `LICENSE`.
 
-## What is experimental
+## Security Notes
 
-- **Hybrid keypair encryption** (X25519 + ML-KEM-768): uses standard implementations but the integration has not been widely reviewed
-- **Cascade encryption profiles** (`paranoid`, `extreme`): additional cipher layers provide defense-in-depth but add complexity
-- **`.lvau` format**: not yet stable — may change before v1.0
+Lvau has not been formally audited. The project uses standard cryptographic primitives through Rust crates, but the integration, envelope format, and key management code need more review before high-risk production use.
 
-## Known limitations
+The `.lvau` format is not stable before v1.0.
 
-- No streaming encryption — entire file is read into memory
-- No file metadata encryption (filenames, sizes, timestamps are visible)
-- No error correction in the envelope format
-- No formal security audit has been performed
-- The LCO layer in the `extreme` profile is a custom obfuscation — **not a cryptographic security boundary**
-- All crates are currently `publish = false` (not on crates.io)
+The `extreme` profile includes an LCO obfuscation layer. LCO is not a cryptographic security boundary.
 
-## Install
+## Known Limitations
 
-### Pre-built binaries
+- Entire files are currently read into memory.
+- File names, filesystem metadata, and approximate plaintext size are not hidden.
+- Windows private key ACL hardening is not implemented; Unix private key files are written with mode `0600` where supported.
+- Hybrid keypair encryption, cascade profiles, GUI, and SFX should be treated as experimental in v0.1.0.
 
-Download from the [GitHub Releases](https://github.com/lasder-ca/lvau/releases/tag/v0.1.0) page.
-
-Available for:
-- Linux x86_64
-- Windows x86_64
-- macOS x86_64
-- macOS ARM (aarch64)
-
-### From source
+## Verify Downloads
 
 ```sh
-git clone https://github.com/lasder-ca/lvau.git
-cd lvau
-git checkout v0.1.0
-cargo build --release
-```
-
-## Checksums
-
-SHA-256 checksums for all release binaries are provided in `checksums.txt` in the release assets. Verify your download:
-
-```sh
-# Linux/macOS
 sha256sum -c checksums.txt
-
-# Windows (PowerShell)
-Get-FileHash lvau-cli.exe -Algorithm SHA256
 ```
 
-## Security disclaimer
+PowerShell:
 
-Lvau has **not been formally audited**. It uses standard, well-reviewed cryptographic primitives via established Rust crates (`chacha20poly1305`, `aes-gcm`, `argon2`, `hkdf`), but the integration and envelope construction have not been professionally reviewed.
+```powershell
+Get-FileHash .\lvau-cli.exe -Algorithm SHA256
+```
 
-Use Lvau with that understanding. For the full threat model, see [docs/THREAT_MODEL.md](https://github.com/lasder-ca/lvau/blob/main/docs/THREAT_MODEL.md).
-
-Report security issues responsibly — see [SECURITY.md](https://github.com/lasder-ca/lvau/blob/main/SECURITY.md).
+Report sensitive security issues privately. See `SECURITY.md`.

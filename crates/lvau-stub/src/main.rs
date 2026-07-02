@@ -127,10 +127,10 @@ impl eframe::App for SfxExtractorApp {
             ui.add_space(20.0);
 
             ui.horizontal(|ui| {
-                if ui.button("Select Output File").clicked()
-                    && let Some(path) = rfd::FileDialog::new().save_file()
-                {
-                    self.out_file = Some(path);
+                if ui.button("Select Output File").clicked() {
+                    if let Some(path) = rfd::FileDialog::new().save_file() {
+                        self.out_file = Some(path);
+                    }
                 }
                 if let Some(path) = &self.out_file {
                     ui.label(path.display().to_string());
@@ -146,9 +146,8 @@ impl eframe::App for SfxExtractorApp {
             if ui
                 .add_enabled(can_proceed, egui::Button::new("Decrypt & Extract"))
                 .clicked()
-                && let Some(payload) = &self.payload
-                && let Some(out_file) = &self.out_file
             {
+              if let (Some(payload), Some(out_file)) = (&self.payload, &self.out_file) {
                 let result = match self.auth_mode {
                     AuthMode::Password => {
                         let pwd = Secret::new(self.secret.clone());
@@ -184,6 +183,7 @@ impl eframe::App for SfxExtractorApp {
                             "Decryption Failed! Wrong password or corrupted file.".to_string();
                     }
                 }
+              }
             }
 
             ui.add_space(20.0);

@@ -19,7 +19,6 @@ release_binaries/
 .gemini/
 
 # Test artifacts
-*.txt
 *.pub
 *.sec
 *.enc

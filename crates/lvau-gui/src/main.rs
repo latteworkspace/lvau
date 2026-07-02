@@ -70,11 +70,14 @@ impl LvauGuiApp {
 impl eframe::App for LvauGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Lvau - Advanced Cryptography Toolkit (Post-Quantum Hybrid)");
+            ui.heading("Lvau - Local File Encryption");
             ui.add_space(20.0);
 
             ui.horizontal(|ui| {
-                if ui.button("Generate Post-Quantum Identity...").clicked() {
+                if ui
+                    .button("Generate Experimental Hybrid Keypair...")
+                    .clicked()
+                {
                     let file_dialog = rfd::FileDialog::new()
                         .set_title("Save Private Key")
                         .add_filter("Lvau Key", &["lvau-key"]);
@@ -177,7 +180,7 @@ impl eframe::App for LvauGuiApp {
                     ui.radio_value(
                         &mut self.profile,
                         SecurityProfile::Extreme,
-                        "Extreme (3-Layer Custom)",
+                        "Extreme (experimental obfuscation)",
                     );
                 });
 
@@ -234,9 +237,10 @@ impl eframe::App for LvauGuiApp {
                                         pwd,
                                         seed_val,
                                         self.profile.clone(),
+                                        None,
                                     )
                                 } else {
-                                    decrypt_file_password(in_file, &temp_out, pwd, seed_val)
+                                    decrypt_file_password(in_file, &temp_out, pwd, seed_val, None)
                                 }
                             }
                             AuthMode::KeyFile => {
@@ -248,16 +252,15 @@ impl eframe::App for LvauGuiApp {
                                             &temp_out,
                                             &pub_key,
                                             self.profile.clone(),
+                                            None,
                                         )
                                     } else {
                                         Err(lvau_core::crypto::CryptoError::DecryptionFailed)
                                     }
+                                } else if let Ok(priv_key) = HybridPrivateKey::load_from_file(kp) {
+                                    decrypt_file_keypair(in_file, &temp_out, &priv_key, None)
                                 } else {
-                                    if let Ok(priv_key) = HybridPrivateKey::load_from_file(kp) {
-                                        decrypt_file_keypair(in_file, &temp_out, &priv_key)
-                                    } else {
-                                        Err(lvau_core::crypto::CryptoError::DecryptionFailed)
-                                    }
+                                    Err(lvau_core::crypto::CryptoError::DecryptionFailed)
                                 }
                             }
                         };
@@ -278,29 +281,34 @@ impl eframe::App for LvauGuiApp {
                                             exe_dir.display()
                                         );
                                         std::fs::remove_file(&temp_out).ok();
+                                    } else if let Err(e) =
+                                        std::fs::copy(&stub_path, &out_path)
+                                    {
+                                        self.status = format!("SFX Copy Error: {:?}", e);
                                     } else {
-                                        if let Err(e) = std::fs::copy(&stub_path, &out_path) {
-                                            self.status = format!("SFX Copy Error: {:?}", e);
-                                        } else {
-                                            let mut out_f = std::fs::OpenOptions::new()
-                                                .append(true)
-                                                .open(&out_path)
-                                                .unwrap();
-                                            let payload_bytes = std::fs::read(&temp_out).unwrap();
-                                            out_f.write_all(&payload_bytes).unwrap();
-                                            let payload_len = payload_bytes.len() as u64;
-                                            out_f.write_all(&payload_len.to_le_bytes()).unwrap();
-                                            out_f.write_all(b"LVAUSFX1").unwrap();
-                                            self.status = format!(
-                                                "Success: SFX Output saved to {}",
-                                                out_path.display()
-                                            );
-                                        }
+                                        let mut out_f = std::fs::OpenOptions::new()
+                                            .append(true)
+                                            .open(&out_path)
+                                            .unwrap();
+                                        let payload_bytes =
+                                            std::fs::read(&temp_out).unwrap();
+                                        out_f.write_all(&payload_bytes).unwrap();
+                                        let payload_len = payload_bytes.len() as u64;
+                                        out_f
+                                            .write_all(&payload_len.to_le_bytes())
+                                            .unwrap();
+                                        out_f.write_all(b"LVAUSFX1").unwrap();
+                                        self.status = format!(
+                                            "Success: SFX Output saved to {}",
+                                            out_path.display()
+                                        );
                                         std::fs::remove_file(&temp_out).ok();
                                     }
                                 } else {
-                                    self.status =
-                                        format!("Success: Output saved to {}", out_path.display());
+                                    self.status = format!(
+                                        "Success: Output saved to {}",
+                                        out_path.display()
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -351,7 +359,7 @@ fn main() {
     eframe::run_native(
         "Lvau Cryptography",
         options,
-        Box::new(|_cc| Box::new(LvauGuiApp::new(logs))),
+        Box::new(|_cc| Ok(Box::new(LvauGuiApp::new(logs)))),
     )
     .unwrap();
 }

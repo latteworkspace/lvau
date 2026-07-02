@@ -1,14 +1,15 @@
 [package]
 name = "lvau-gui"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-eframe = "0.27"
-egui = "0.27"
-rfd = "0.14"
+eframe = "0.29.1"
+egui = "0.29.1"
+rfd = "0.15"
 lvau-core = { path = "../lvau-core" }
 lvau-protocol = { path = "../lvau-protocol" }
 secrecy = "0.8"
 log = "0.4.33"
 env_logger = "0.11.11"
+

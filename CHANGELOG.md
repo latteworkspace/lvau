@@ -17,6 +17,9 @@ Initial public release preparation.
 - **Key separation**: HKDF-SHA256 for deriving independent encryption keys from master key
 - **Versioned envelope**: `.lvau` format with magic bytes, version field, and AAD-bound metadata
 - **Metadata inspection**: read envelope metadata without decrypting content
+- **Truncation detection**: envelope stores plaintext length and rejects mismatched decrypt output
+- **CLI overwrite safety**: output files are not replaced unless `--force` is supplied
+- **CLI automation**: `--password-file` and `--seed-file` support non-interactive local workflows
 - **Parallel encryption**: 1 MB chunked processing via Rayon
 - **Hybrid keypair**: X25519 + ML-KEM-768 key exchange (experimental)
 - **Cascade encryption**: AES-256-GCM + XChaCha20-Poly1305 cascade in paranoid profile
@@ -31,3 +34,4 @@ Initial public release preparation.
 
 - This release has **not been formally audited**
 - The `.lvau` format is **not yet stable** and may change before v1.0
+- Hybrid keypair encryption, cascade profiles, GUI, and SFX remain experimental

@@ -15,7 +15,7 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 debug = false
-overflow-checks = false
+overflow-checks = true
 
 [profile.release-small]
 inherits = "release"

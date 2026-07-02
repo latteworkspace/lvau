@@ -1,87 +1,67 @@
 # Launch Posts
 
-Draft posts for announcing Lvau v0.1.0.
-
----
+Draft copy for Lvau v0.1.0.
 
 ## X / Twitter
 
+```text
+I built Lvau: boring, inspectable file encryption in Rust.
+
+It uses standard primitives, safe defaults, and a versioned .lvau envelope you can inspect without decrypting the payload.
+
+CLI-first, GUI-supported, local-first. v0.1.0 is experimental and not audited yet.
+
+https://github.com/lasder-ca/lvau
 ```
-I built Lvau — boring, inspectable file encryption in Rust.
 
-It uses standard cryptographic primitives, safe defaults, and a versioned .lvau envelope that can be inspected without decrypting the payload.
-
-CLI-first, GUI-supported, local-first.
-
-v0.1.0 is out: https://github.com/lasder-ca/lvau
-```
-
----
-
-## Reddit / Hacker News
+## Hacker News / Reddit
 
 ### Title
 
-Lvau — Boring, inspectable file encryption for Rust apps and power users
+Lvau: boring, inspectable file encryption in Rust
 
 ### Body
 
-```
-I've been working on Lvau, a file encryption toolkit in Rust. v0.1.0 is the first public release.
+```text
+I built Lvau, a local file encryption toolkit in Rust. v0.1.0 is the first public release candidate.
 
-**What it does:**
-- Encrypts individual files with a password or hybrid keypair
-- Uses XChaCha20-Poly1305 (AEAD) with Argon2id key derivation
-- Writes a versioned `.lvau` envelope with inspectable metadata
-- CLI-first, with a native GUI available (egui)
+What it does:
+- Encrypts individual files with a password or experimental hybrid keypair
+- Uses XChaCha20-Poly1305 and Argon2id in the default password path
+- Writes a versioned .lvau envelope with inspectable public metadata
+- Provides a CLI first, plus a native egui GUI
+- Ships release binaries for Linux, Windows, and macOS
 
-**Design philosophy:**
-- Standard, boring cryptography — no custom ciphers as a security boundary
-- Safe defaults — strong KDF parameters out of the box
-- Inspectable format — you can read the envelope metadata without decrypting
-- Honest documentation — clear threat model, no overclaiming
+What it is not:
+- Not a replacement claim against age, VeraCrypt, Cryptomator, or rclone crypt
+- Not formally audited
+- Not format-stable before v1.0
 
-**What it is NOT:**
-- Not a replacement for age, VeraCrypt, Cryptomator, or rclone crypt — each has different strengths
-- Not formally audited — the threat model and SECURITY.md are upfront about this
-- Not stable yet — the format may change before v1.0
-
-**Technical details:**
-- Argon2id KDF with configurable cost profiles (16 MB to 1 GB)
-- HKDF-SHA256 key separation
-- Parallel 1 MB chunked encryption via Rayon
-- Experimental X25519 + ML-KEM-768 hybrid keypair support
-- Self-extracting archive (SFX) support
-- Zeroized key material via the `zeroize` crate
-
-The code is MIT-licensed. I'd appreciate feedback on the design, threat model, and format specification.
+I would especially appreciate feedback on the threat model, file format, CLI ergonomics, and tests.
 
 GitHub: https://github.com/lasder-ca/lvau
 Threat model: https://github.com/lasder-ca/lvau/blob/main/docs/THREAT_MODEL.md
-Format spec: https://github.com/lasder-ca/lvau/blob/main/docs/FORMAT.md
+Format: https://github.com/lasder-ca/lvau/blob/main/docs/FORMAT.md
 ```
 
----
+## GitHub Release Text
 
-## GitHub Discussions (announcement)
+```text
+Lvau v0.1.0 is the first public release candidate for a Rust-based local file encryption toolkit.
 
-### Title
+This release includes a CLI, native GUI, versioned .lvau envelope, password-based encryption, experimental hybrid keypair encryption, and cross-platform binary archives.
 
-v0.1.0 released — Boring, inspectable file encryption
-
-### Body
-
+Please read the threat model and security policy before relying on Lvau for important data. The project has not been formally audited and the format is not stable before v1.0.
 ```
-Lvau v0.1.0 is the first public release.
 
-This release includes:
-- CLI and GUI for file encryption/decryption
-- XChaCha20-Poly1305 with Argon2id key derivation
-- Versioned `.lvau` envelope with inspectable metadata
-- Pre-built binaries for Linux, Windows, and macOS
+## Japanese X / Zenn / Qiita Draft
 
-Please see the release notes for details, known limitations, and security disclaimers:
-https://github.com/lasder-ca/lvau/releases/tag/v0.1.0
+```text
+Rust製の、地味で検証しやすいファイル暗号化ツール Lvau を作っています。
 
-Feedback, bug reports, and security reviews are very welcome.
+標準的な暗号プリミティブ、安全寄りの既定値、復号せずに公開メタデータを確認できる .lvau エンベロープを重視しています。
+
+v0.1.0 は実験的な初期リリースで、正式な監査はまだありません。脅威モデルや形式へのフィードバックを歓迎します。
+
+https://github.com/lasder-ca/lvau
 ```

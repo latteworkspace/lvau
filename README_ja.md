@@ -1,111 +1,153 @@
-<div align="center">
-  <h1>☁️ Lvau</h1>
-  <p><strong>デフォルトで安全な、使いやすいローカルファイル暗号化ツールキット。</strong></p>
-  <p><i>「暗号化は標準的で、堅牢で、退屈であるべきだ。難読化は二の次。UXはミスを防ぐ。」</i></p>
-  <p><a href="README.md">English</a> | 日本語 (Japanese)</p>
-  
-  <br/>
-  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
-  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License" />
-</div>
+# Lvau
 
----
+> Rustで書かれた、地味で検証しやすいローカルファイル暗号化ツール。
 
-Lvau は、最新の暗号化プリミティブを堅牢かつ使いやすくする、セキュア・バイ・デフォルトな暗号化ツールです。独自の難読化には頼らず、現代的で安全な標準に厳密に従います。
+Lvau は、ローカルファイルを暗号化するための Rust 製ツールキットです。標準的な暗号プリミティブ、安全寄りの既定値、復号しなくても公開メタデータを確認できるバージョン付き `.lvau` エンベロープを重視しています。
 
-## ✨ 主な機能
+[English](README.md) | Japanese
 
-### 🛡EE「退屈」なセキュリティ
-- **XChaCha20-Poly1305 AEAD**: デフォルトの暗号化アルゴリズム。ファイルごとに新しい 192-bit のランダムな Nonce を生成し、偶発的な Nonce の再利用を極めて困難にします。
-- **Argon2id KDF**: 暗号化ごとに固有の 16 バイトのランダムなソルトを使用する、マスターキー派生のための堅牢なパスワードハッシュ。
-- **HKDF 鍵分離**: パスワードから派生したマスターキーは、ファイル暗号化キーに安全に拡張されます。
-- **機密情報のゼロ化**: センシティブな鍵情報は、使用後可能な限り速やかにメモリから消去されます。
-- **バージョン管理された `.lvau` エンベロープ**: すべての暗号化メタデータを AEAD の追加認証データ (AAD) にバインドする、厳密に型付けされたエンベロープスキーマ。
+## クイックデモ
 
-### 🧩 将来を見据えたアーキテクチャ
-Lvau は将来の進歩に対応できるよう構造的に設計されています。`lvau-protocol` には以下のためのプレースホルダーがあります：
-- **非対称暗号化**: 受信者の鍵をラップするための `X25519` と、マニフェストの署名のための `Ed25519`。
-- **耐量子暗号 (PQC)**: `ML-KEM` と `ML-DSA` のハイブリッド。
-- **運用キープロバイダ**: KMS/HSM 抽象化インターフェイス。*(注: ローカルファイルは常にローカルで暗号化されます)。*
-
----
-
-## 🚀 インストール
-
-### 前提条件
-プロジェクトをビルドするには、[Rust と Cargo](https://rustup.rs/) をインストールする必要があります。
-
-### ビルド手順
 ```sh
-# リポジトリのクローン
+lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password
+lvau-cli inspect --in-file secret.txt.lvau
+lvau-cli decrypt --in-file secret.txt.lvau --out-file secret.restored.txt --password
+```
+
+自動化やテストでは、パスワードをコマンド履歴に残さないためにローカルのパスワードファイルを使えます。
+
+```sh
+lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file password.txt
+```
+
+## 主な機能
+
+- 既定のパスワード暗号化に XChaCha20-Poly1305 AEAD を使用
+- Argon2id KDF と `fast`、`balanced`、`archive`、`paranoid`、`extreme` プロファイル
+- HKDF-SHA256 による鍵分離
+- マジックバイト、バージョン、KDF メタデータ、nonce、認証済みヘッダーハッシュ、平文長を含む `.lvau` エンベロープ
+- Rayon による 1 MiB チャンク単位の並列処理
+- CLI の非表示パスワード入力と、非対話実行用の `--password-file`
+- 既存出力の上書きを既定で拒否し、必要な場合だけ `--force` を使用
+- `egui` ベースのネイティブ GUI
+
+## 実験的な機能
+
+v0.1.0 では、次の機能は実験的です。
+
+- X25519 + ML-KEM-768 によるハイブリッド鍵ペア暗号化
+- `paranoid` と `extreme` のカスケードプロファイル
+- `extreme` で使われる LCO 層。LCO は難読化であり、暗号学的な安全性の境界ではありません。
+- Windows 向け自己展開アーカイブ (`--sfx`)
+
+## インストール
+
+### リリースバイナリ
+
+[GitHub Releases](https://github.com/lasder-ca/lvau/releases) からダウンロードできます。
+
+| プラットフォーム | アセット |
+| --- | --- |
+| Linux x86_64 | `lvau-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows x86_64 | `lvau-x86_64-pc-windows-msvc.zip` |
+| macOS x86_64 | `lvau-x86_64-apple-darwin.tar.gz` |
+| macOS aarch64 | `lvau-aarch64-apple-darwin.tar.gz` |
+
+各アーカイブには `lvau-cli`、`lvau-gui`、`lvau-stub`、`README.md`、`LICENSE` が含まれます。Windows では `.exe` が付きます。ダウンロード後はリリースの `checksums.txt` で検証してください。
+
+### ソースからビルド
+
+```sh
 git clone https://github.com/lasder-ca/lvau.git
 cd lvau
-
-# ワークスペース全体をリリースモードでビルド
-cargo build --release
+cargo build --workspace --release
 ```
 
----
+生成物は `target/release/` に置かれます。
 
-## 📖 使い方
+## CLI の使い方
 
-Lvau は **CLI**、**GUI**、または **Server API** 経由で使用できます。
+```text
+lvau-cli <COMMAND> [OPTIONS]
 
-### ⚠️ Server API モードのセキュリティ警告
-**Server API モードはエンドツーエンド暗号化（E2EE）やゼロ知識ではありません。** API経由でアップロードされたファイルとパスワードは、APIサーバー上のメモリ内で処理されます。機密性の高いファイルについては、常にオフラインのローカル CLI/GUI 版を使用してください。
+Commands:
+  encrypt   Encrypt a file
+  decrypt   Decrypt a file
+  inspect   Inspect public envelope metadata
+  keygen    Generate an experimental hybrid keypair
+```
 
-### CLI の使用 (`lvau-cli.exe`)
+パスワードで暗号化:
 
-CLI では、シェルの履歴への漏洩を防ぐため、パスワード入力は非表示のプロンプトで行われます。
-
-**1. ファイルの暗号化**
 ```sh
-lvau-cli encrypt --in secret.txt --out encrypted.lvau --profile balanced
+lvau-cli encrypt --in-file document.pdf --out-file document.pdf.lvau --password
 ```
 
-*利用可能なセキュリティプロファイル: `fast`, `balanced`, `archive`, `paranoid` (Argon2id のコストを線形に増加させます)。*
+復号:
 
-**2. ファイルの復号**
 ```sh
-lvau-cli decrypt --in encrypted.lvau --out secret.txt
+lvau-cli decrypt --in-file document.pdf.lvau --out-file document.pdf --password
 ```
 
-**3. エンベロープメタデータの検査**
-コンテンツを復号せずに AAD メタデータを読み取ります。
+復号せずに公開メタデータを確認:
+
 ```sh
-lvau-cli inspect --in encrypted.lvau
+lvau-cli inspect --in-file document.pdf.lvau
 ```
 
-### GUI の使用 (`lvau-gui.exe`)
-クロスプラットフォームのネイティブグラフィカルウィザードが利用可能です。対象ファイルを選択し、パスワードを設定して実行するだけです。テレメトリは安全なメタデータのみを厳密に表示し、平文チャンクの露出を防ぎます。
+プロファイル指定:
 
----
-
-## 🏗️ ワークスペースアーキテクチャ
-
-Lvau は攻撃対象領域を最小限に抑えるため、独立したクレートにモジュール化されています：
-
-```mermaid
-graph TD;
-    CLI[lvau-cli] --> Core(lvau-core)
-    GUI[lvau-gui] --> Core
-    API[lvau-api] --> Core
-    Web[Frontend UI] --> API
-    Core --> Protocol[lvau-protocol]
-    style Core fill:#6b46c1,color:#fff
-    style Web fill:#3182ce,color:#fff
+```sh
+lvau-cli encrypt --in-file data.bin --out-file data.bin.lvau --password --profile archive
 ```
 
-- `lvau-protocol`: バイナリフォーマットの定義とシリアライズ (`postcard`)。厳密な `Envelope` 仕様を含みます。
-- `lvau-core`: `secrecy` 制約を介して Argon2id、HKDF、および XChaCha20-Poly1305 ロジックを処理する暗号化エンジン。
-- `lvau-api`: アップロードエンドポイントを提供する Web API バックエンド (E2EEではありません)。
-- `lvau-cli`: `clap` を使用したコマンドラインインターフェイス。
-- `lvau-gui`: `egui` で構築されたハードウェアアクセラレーション GUI。
-- `lvau-stub`: 将来の SFX 統合機能のための最小限のプレースホルダー実行ファイル。
+| プロファイル | Argon2id メモリ | 想定用途 |
+| --- | ---: | --- |
+| `fast` | 16 MiB | テストや短時間のローカル処理 |
+| `balanced` | 64 MiB | 既定の一般用途 |
+| `archive` | 256 MiB | 低頻度のアーカイブ用途 |
+| `paranoid` | 1 GiB | 実験的なカスケードプロファイル |
+| `extreme` | 1 GiB | 実験的なカスケード + LCO 難読化 |
 
-## 📄 ライセンス
-このプロジェクトは MIT ライセンスの下でライセンスされています - 詳細は [LICENSE](LICENSE) ファイルを参照してください。
+既存ファイルを置き換える場合は `--force` を付けます。指定しない場合、Lvau は上書きを拒否します。
 
-## 🤖 AI使用について
-このプロジェクトには主にGeminiなどを用いりレビュー、エラーなどは人間が修正しています。
+## GUI
+
+`lvau-gui` は、ファイル選択、パスワードまたは鍵ペアモード、プロファイル選択、ステータス表示、ログ表示を備えています。v0.1.0 では CLI の信頼性を最優先とし、GUI は補助的な位置づけです。
+
+```sh
+cargo run --release --package lvau-gui
+```
+
+## セキュリティモデル
+
+Lvau は、ローカルファイルを保存時に暗号化するためのツールです。攻撃者が暗号化済み `.lvau` ファイルを入手しても、正しいパスワードまたは秘密鍵がなければ内容を読めないことを目指します。
+
+Lvau は、ファイル名、ファイルシステム上のメタデータ、平文サイズのおおよその情報を隠しません。また、マルウェア、キーロガー、侵害された OS、弱いパスワード、盗まれた秘密鍵からは保護できません。
+
+Lvau は正式な第三者監査を受けていません。機密性の高い本番用途では、age、VeraCrypt、Cryptomator、rclone crypt などの実績あるツールも検討してください。
+
+詳しくは [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) を読んでください。
+
+## ファイル形式
+
+`.lvau` 形式は v1.0 までは安定ではありません。形式の詳細は [docs/FORMAT.md](docs/FORMAT.md) にあります。
+
+## 開発
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --workspace --release
+```
+
+貢献方法は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
+## セキュリティ報告
+
+機密性の高い脆弱性を public GitHub issue に投稿しないでください。[SECURITY.md](SECURITY.md) を参照してください。
+
+## ライセンス
+
+MIT。詳細は [LICENSE](LICENSE) を参照してください。
