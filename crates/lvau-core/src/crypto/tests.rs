@@ -289,7 +289,16 @@ fn hybrid_keypair_roundtrips() {
     let (private_key, public_key) = generate_keypair();
 
     fs::write(&input, b"hybrid recipient data").unwrap();
-    encrypt_file_keypairs(&input, &enc, &vec![public_key], SecurityProfile::Fast, None, None, false).unwrap();
+    encrypt_file_keypairs(
+        &input,
+        &enc,
+        &[public_key],
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
     decrypt_file_keypair(&enc, &dec, &private_key, None).unwrap();
 
     assert_eq!(fs::read(&dec).unwrap(), b"hybrid recipient data");
@@ -383,7 +392,16 @@ fn wrong_keypair_fails() {
     let (private_key2, _) = generate_keypair();
 
     fs::write(&input, b"hybrid recipient data").unwrap();
-    encrypt_file_keypairs(&input, &enc, &vec![public_key1], SecurityProfile::Fast, None, None, false).unwrap();
+    encrypt_file_keypairs(
+        &input,
+        &enc,
+        &[public_key1],
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
 
     let result = decrypt_file_keypair(&enc, &dec, &private_key2, None);
     assert!(matches!(result, Err(CryptoError::DecryptionFailed)));

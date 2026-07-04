@@ -225,6 +225,7 @@ fn read_envelope(reader: &mut dyn Read) -> Result<Envelope, CryptoError> {
     Ok(envelope)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn encrypt_file_password(
     input_path: &Path,
     output_path: &Path,

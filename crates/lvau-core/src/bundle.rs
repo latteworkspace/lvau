@@ -5,9 +5,7 @@
 //! per-file BLAKE3 hashes. By default, no file names or directory structure
 //! are exposed in the public envelope.
 
-use crate::crypto::{
-    decrypt_file_password, verify_file_password, CryptoError,
-};
+use crate::crypto::{decrypt_file_password, verify_file_password, CryptoError};
 use lvau_protocol::envelope::{BundleEntry, BundleManifest, ContentType, EnvelopeHeader};
 use secrecy::Secret;
 use std::fs::{self, File};
@@ -160,6 +158,7 @@ fn collect_files(
 }
 
 /// Pack a directory into a single encrypted `.lvau` bundle file.
+#[allow(clippy::too_many_arguments)]
 pub fn pack_directory(
     in_dir: &Path,
     out_file: &Path,
@@ -762,5 +761,45 @@ mod tests {
             fs::read_to_string(out_dir.join("こんにちは.txt")).unwrap(),
             "日本語テスト"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn extract_rejects_symlink_overwrite_unless_allowed() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let in_dir = dir.path().join("input");
+        let out_dir = dir.path().join("output");
+        let out_file = dir.path().join("bundle.lvau");
+
+        fs::create_dir_all(&in_dir).unwrap();
+        fs::write(in_dir.join("test.txt"), "secret").unwrap();
+
+        pack_directory(
+            &in_dir,
+            &out_file,
+            crate::crypto::EncryptCredential::Password(test_password(), None),
+            SecurityProfile::Fast,
+            false,
+            &PaddingProfile::None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+
+        fs::create_dir_all(&out_dir).unwrap();
+        symlink("/etc/passwd", out_dir.join("test.txt")).unwrap();
+
+        let result = extract_bundle(
+            &out_file,
+            &out_dir,
+            test_password(),
+            false, // allow_symlinks
+            false, // force
+            false, // dry_run
+        );
+
+        assert!(result.is_err());
     }
 }
