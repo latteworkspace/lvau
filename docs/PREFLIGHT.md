@@ -1,36 +1,25 @@
-# Preflight Verification
+# Preflight Inspections
 
-In many workflows, you want to inspect or verify an encrypted capsule *before* you prompt the user for a password or load a private key into memory.
+A core feature of Lvau is the ability to inspect and verify an encrypted capsule *without* having the decryption password or private key.
 
-Lvau provides a dedicated **Preflight** command for exactly this purpose. 
+## `lvau-cli preflight`
 
-## What is Preflight?
-
-The `lvau-cli preflight` command analyzes the public metadata envelope of a `.lvau` file without decrypting the payload. It checks:
-- **Envelope Integrity**: Validates the magic bytes, format version, and ensures the header hasn't been structurally corrupted.
-- **AAD Hash**: Verifies that the public header hasn't been maliciously modified since it was created.
-- **Signature (Optional)**: If a signing key is provided via `--verify-key`, it cryptographically validates the author's signature.
-- **Policy (Optional)**: If a `CapsulePolicy` is provided via `--policy`, it lints the capsule against the required algorithms, profiles, and signers.
-
-## Usage
+The `preflight` command analyzes the public envelope of a capsule and generates a security report.
 
 ```sh
-lvau-cli preflight --in-file secrets.lvau
+lvau-cli preflight --in-file mybundle.lvau
 ```
 
-With signature and policy verification:
-```sh
-lvau-cli preflight --in-file secrets.lvau \
-    --verify-key release_team.lvau-verify \
-    --policy strict.toml
-```
+### What it checks
 
-## JSON Output for Automation
+1. **Version Compatibility**: Ensures your version of Lvau can parse the capsule.
+2. **Security Profile**: Extracts the KDF profile and cryptographic algorithm used.
+3. **Public Hash Integrity**: Verifies that the public manifest has not been tampered with.
+4. **Signature Status**: Checks for the presence of an author signature.
+5. **Metadata Presence**: Detects if recovery shares or release metadata are attached.
+6. **Policy Overrides**: Determines if the author forced policy overrides during encryption.
 
-Preflight is designed to be easily consumed by CI/CD systems, pre-commit hooks, and wrapper scripts. Simply append `--json`:
+### Preflight vs Inspect
 
-```sh
-lvau-cli preflight --in-file secrets.lvau --json
-```
-
-The output will be a structured JSON object detailing any warnings, policy violations, or errors encountered. If the `status` field is `"Ok"` or `"Warn"`, the capsule is generally structurally sound. If it is `"Fail"`, it should not be trusted or decrypted.
+- `lvau-cli inspect` simply dumps the raw JSON or human-readable data from the capsule manifest.
+- `lvau-cli preflight` acts as a **doctor** for the capsule, actively analyzing the parameters to provide `Warn`, `Pass`, or `Fail` signals based on modern security standards.

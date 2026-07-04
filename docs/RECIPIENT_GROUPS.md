@@ -1,63 +1,43 @@
 # Recipient Groups
 
-When using Lvau's experimental hybrid keypair encryption (X25519 + ML-KEM-768), you can encrypt a file so that multiple different people can decrypt it using their own private keys.
+Recipient Groups allow you to encrypt a Lvau capsule so that it can be decrypted by **any** member of a predefined group, without sharing a single password.
 
-To make managing multiple public keys easier, Lvau supports **Recipient Groups** via TOML configuration files.
+Lvau achieves this using Hybrid Keypair Encryption (X25519 + ML-KEM-768). The payload's File Encryption Key (FEK) is encrypted individually for each recipient's public key and stored in the capsule's public envelope.
 
-## Creating a Group
+## Managing Recipient Groups
 
-You can define a group of recipients in a `group.toml` file. This file simply lists the paths to each recipient's public key (`.lvau-pub`).
+A Recipient Group is stored locally as a simple TOML configuration file (e.g., `devops-team.toml`).
 
-```toml
-name = "infrastructure-team"
-description = "Keys for the core infrastructure team"
-
-[[recipients]]
-name = "alice"
-key_path = "keys/alice.lvau-pub"
-
-[[recipients]]
-name = "bob"
-key_path = "keys/bob.lvau-pub"
-
-[[recipients]]
-name = "charlie"
-key_path = "keys/charlie.lvau-pub"
-```
-
-## Using a Group
-
-When encrypting a file or packing a bundle, you can pass the recipient group file using the `--recipient-group` flag:
+### 1. Create a Group
 
 ```sh
-lvau-cli encrypt --in-file secret.txt \
-    --out-file secret.lvau \
-    --recipient-group infrastructure-team.toml
+lvau-cli recipients group create devops-team.toml
 ```
 
-Lvau will read the group file, load all the referenced public keys, and create a recipient slot in the `.lvau` capsule for each key. Any member of the group can then decrypt the file using their own private key:
+### 2. Add Members
+
+Each member must first generate their own hybrid keypair using `lvau-cli keygen`.
 
 ```sh
-# Alice decrypts the file
-lvau-cli decrypt --in-file secret.lvau \
-    --out-file secret.restored.txt \
-    --priv-key keys/alice.lvau-key
+# Alice generates her key
+lvau-cli keygen --out-base alice_key
+
+# Admin adds Alice's public key to the group
+lvau-cli recipients group add devops-team.toml --pub-key alice_key.lvau-pub
 ```
 
-## Tooling
+### 3. Encrypt for a Group
 
-Lvau provides built-in commands to help manage these TOML files without hand-editing them.
+To encrypt a file or bundle for everyone in the group:
 
 ```sh
-# Create a new empty group
-lvau-cli recipients group create --out-file team.toml --name "My Team"
+lvau-cli bundle pack --in-dir my_secrets/ --out-file secrets.lvau --recipient-group devops-team.toml
+```
 
-# Add a public key to the group
-lvau-cli recipients group add --group-file team.toml --pub-key alice.lvau-pub --name "alice"
+### 4. Decrypting as a Member
 
-# List members in a group
-lvau-cli recipients group list --group-file team.toml
+Any member of the group can decrypt the capsule using their own private key. They do not need the group file.
 
-# Remove a member from the group
-lvau-cli recipients group remove --group-file team.toml --name "alice"
+```sh
+lvau-cli bundle extract --in-file secrets.lvau --out-dir extracted/ --priv-key alice_key.lvau-key
 ```

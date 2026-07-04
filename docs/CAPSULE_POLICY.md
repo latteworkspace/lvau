@@ -1,58 +1,34 @@
 # Capsule Policy
 
-Lvau v0.4.0 introduces the concept of a **Capsule Policy**. This allows organizations and individuals to define minimum security requirements for their encrypted `.lvau` capsules, ensuring that weak encryption is rejected *before* decryption is attempted.
+Lvau introduces a strict policy engine designed to ensure that encrypted capsules comply with your organization's security standards *before* anyone attempts to decrypt them.
 
-## The Problem
+## Policy Rules
 
-By default, an encryption tool will gladly decrypt whatever you give it, as long as you have the right key. However, this means a user might unknowingly accept and rely on an encrypted file that used the `fast` KDF profile, an outdated cipher, or lacked a required author signature.
+A Lvau capsule policy (`policy.toml`) can enforce the following rules:
 
-## The Solution: TOML Policies
+1. **`require_signature`**: The capsule MUST be signed by a trusted Ed25519 author key.
+2. **`allow_experimental`**: If false, the capsule MUST NOT use experimental features (like LCO obfuscation or SFX wrappers).
+3. **`min_kdf_profile`**: Ensures the capsule uses a sufficiently strong Key Derivation Function (e.g., `Balanced`, `Paranoid`). Weak capsules will be rejected.
+4. **`min_approvals`**: Requires the capsule to have at least `N` distinct approval seals before it can be extracted.
 
-Lvau uses a `CapsulePolicy` (typically stored as `policy.toml`) to enforce security invariants on the public envelope metadata.
+## Managing Policies
 
-### Example `policy.toml`
-
-```toml
-[policy]
-# The minimum allowed version of the Lvau envelope format
-min_version = 1
-
-# List of allowed algorithms (others will be rejected)
-allowed_algorithms = [
-    "XChaCha20Poly1305",
-    "XChaCha20Poly1305_Argon2id"
-]
-
-# List of allowed KDF profiles
-allowed_profiles = [
-    "Balanced",
-    "Archive",
-    "Paranoid"
-]
-
-# Ensure that the capsule was signed by at least one of these Ed25519 keys
-required_signers = [
-    "d23a1b4c...f910a", # Alice
-    "a19f8b4c...0c91b"  # Release Engineering Key
-]
-```
-
-## How to use a Policy
-
-You can provide a policy file to almost any `lvau-cli` command:
-
-**Encryption:**
-If you pass `--policy policy.toml` during encryption, Lvau will ensure the parameters you've chosen meet the policy requirements before generating the capsule. (You can bypass this with `--allow-policy-override`, which sets a flag in the metadata).
+### Create a Policy
 
 ```sh
-lvau-cli encrypt --in-file data.txt --out-file data.lvau --policy strict-policy.toml
+lvau-cli policy create --out-file secure_policy.toml
 ```
 
-**Preflight & Decryption:**
-If you pass `--policy policy.toml` during decryption or preflight, Lvau will verify the capsule against the policy *before* asking for a password or attempting to decrypt.
+This creates a default policy file. You can edit it manually to match your requirements.
+
+### Lint a Capsule Against a Policy
 
 ```sh
-lvau-cli preflight --in-file data.lvau --policy strict-policy.toml
+lvau-cli policy lint --in-file bundle.lvau --policy secure_policy.toml
 ```
 
-If the policy fails, Lvau will abort with a detailed error message indicating which constraints were violated.
+This will run the policy engine against the public manifest of the capsule. It will return a `PASS` or `FAIL` with a detailed list of policy violations.
+
+## Integration
+
+Capsule Policies are integrated into extraction and preflight checks. By providing a `--policy` argument to `lvau-cli bundle extract`, Lvau will outright refuse to decrypt a capsule that violates the policy, protecting your system from maliciously downgraded crypto parameters or unsigned payloads.

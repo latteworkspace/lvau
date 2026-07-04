@@ -248,6 +248,11 @@ enum Commands {
         #[command(subcommand)]
         action: ReleaseAction,
     },
+    /// Manage recipients and recipient groups.
+    Recipients {
+        #[command(subcommand)]
+        action: RecipientsAction,
+    },
     /// Manage recovery metadata.
     Recovery {
         #[command(subcommand)]
@@ -635,6 +640,45 @@ enum PolicyAction {
 
         #[arg(short, long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RecipientsAction {
+    /// Manage recipient groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum GroupAction {
+    /// Create a new recipient group
+    Create {
+        /// File path for the new group (e.g., group.toml)
+        name: String,
+    },
+    /// Add a recipient to a group
+    Add {
+        /// File path of the group (e.g., group.toml)
+        name: String,
+        /// Public key file path (.lvau-pub)
+        #[arg(long)]
+        pub_key: PathBuf,
+    },
+    /// Remove a recipient from a group
+    Remove {
+        /// File path of the group (e.g., group.toml)
+        name: String,
+        /// Name of the recipient or key fingerprint to remove
+        #[arg(long)]
+        fingerprint: String,
+    },
+    /// List recipients in a group
+    List {
+        /// File path of the group (e.g., group.toml)
+        name: String,
     },
 }
 
@@ -1725,6 +1769,79 @@ fn run() -> Result<(), CliError> {
                 let manifest = verify_bundle(&in_file, pwd)?;
                 println!("Bundle verified: {} files", manifest.entries.len());
             }
+        },
+        Commands::Recipients { action } => match action {
+            RecipientsAction::Group { action } => match action {
+                GroupAction::Create { name } => {
+                    let path = PathBuf::from(&name);
+                    if path.exists() {
+                        return Err(CliError::Message(format!(
+                            "Group file already exists: {}",
+                            name
+                        )));
+                    }
+                    let group = lvau_core::groups::RecipientGroup {
+                        name: name.clone(),
+                        description: Some("Created by lvau-cli".into()),
+                        recipients: Vec::new(),
+                    };
+                    group
+                        .save_to_file(&path)
+                        .map_err(CliError::Message)?;
+                    println!("Created empty recipient group at {}", name);
+                }
+                GroupAction::Add { name, pub_key } => {
+                    let path = PathBuf::from(&name);
+                    let mut group = lvau_core::groups::RecipientGroup::load_from_file(&path)
+                        .map_err(CliError::Message)?;
+
+                    let json = std::fs::read_to_string(&pub_key).map_err(|e| {
+                        CliError::Message(format!("Failed to read public key file: {:?}", e))
+                    })?;
+                    let format: lvau_core::crypto::keys::HybridPublicKeyFormat =
+                        serde_json::from_str(&json).map_err(|e| {
+                            CliError::Message(format!("Invalid public key format: {:?}", e))
+                        })?;
+
+                    group.recipients.push(lvau_core::groups::GroupRecipient {
+                        name: pub_key.file_stem().unwrap().to_string_lossy().to_string(),
+                        key: format,
+                    });
+
+                    group
+                        .save_to_file(&path)
+                        .map_err(CliError::Message)?;
+                    println!("Added key {} to group {}", pub_key.display(), name);
+                }
+                GroupAction::Remove { name, fingerprint } => {
+                    let path = PathBuf::from(&name);
+                    let mut group = lvau_core::groups::RecipientGroup::load_from_file(&path)
+                        .map_err(CliError::Message)?;
+
+                    let initial_len = group.recipients.len();
+                    group.recipients.retain(|r| r.name != fingerprint); // Simple match for now
+
+                    if group.recipients.len() < initial_len {
+                        group
+                            .save_to_file(&path)
+                            .map_err(CliError::Message)?;
+                        println!("Removed recipient {} from group {}", fingerprint, name);
+                    } else {
+                        println!("Recipient {} not found in group {}", fingerprint, name);
+                    }
+                }
+                GroupAction::List { name } => {
+                    let path = PathBuf::from(&name);
+                    let group = lvau_core::groups::RecipientGroup::load_from_file(&path)
+                        .map_err(CliError::Message)?;
+
+                    println!("Group: {}", group.name);
+                    println!("Recipients: {}", group.recipients.len());
+                    for (i, rec) in group.recipients.iter().enumerate() {
+                        println!("  [{}] {}", i + 1, rec.name);
+                    }
+                }
+            },
         },
         Commands::Release { action } => match action {
             ReleaseAction::Attach {

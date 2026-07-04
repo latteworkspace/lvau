@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.3.0] - 2026-07-04
 
 ### Added
 - **Capsule Policy**: Enforce strict linting rules on `.lvau` capsules before creation or at inspection time via `CapsulePolicy` TOML specification.
@@ -13,13 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Approval Seals**: Support appending Ed25519 co-signatures to the envelope's public metadata (AAD) without modifying or decrypting the payload, via `lvau-cli approve`.
 - **Encrypted Manifest Diffing**: Decrypt and compare the `BundleManifest` of two directory bundles to generate `Added/Removed/Modified/Unchanged` reports via `lvau-cli bundle diff`.
 - **Verification Reporting**: Full static and dynamic verification reports via `lvau-cli report`.
-
-### Changed
-- Extensively modified `lvau-protocol` to support `approvals`, `content_type`, `signature`, `public_label`, `release_metadata`, `policy_overridden`, and `recovery_metadata`.
-
-## [0.3.0] - 2026-07-04
-
-### Added
+- **Recipient Groups**: Encrypt files for a local group config of multiple hybrid public keys via `lvau-cli recipients group`.
 - **Sealed Bundle Mode**: Full implementation of `bundle pack`, `extract`, `inspect`, `list`, and `verify` with dry-run capabilities and path traversal protections.
 - **Signed Envelopes**: Optional Ed25519 signatures covering public envelope and ciphertext via `sign-keygen`, `sign`, and `verify-signature`.
 - **Recovery Shares**: Split master keys into Shamir Secret Sharing (SSS) shares via `recovery split`, `combine`, and `inspect`.

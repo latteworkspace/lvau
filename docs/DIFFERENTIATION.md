@@ -1,42 +1,37 @@
 # Differentiation
 
-Lvau is an encrypted capsule toolkit designed specifically for local files and developer workflows. It is not trying to compete with or replace established encryption tools. Instead, it offers a specific combination of features that are useful for managing signed, policy-checked, recoverable encrypted artifacts.
+Lvau is designed to fill a specific gap in the local encryption ecosystem. While excellent tools already exist, they are often designed for very different use cases.
 
-## What is a Capsule?
+## Why not age?
 
-Unlike a standard encrypted file, a Lvau **capsule** (`.lvau`) contains more than just ciphertext. It can include:
-- An encrypted payload (single file or a directory bundle)
-- An encrypted private manifest (for bundles)
-- Minimal public metadata (version, profile, algorithm, KDF parameters)
-- Multiple recipient slots (passwords or keypairs)
-- Public release metadata (project name, version, commit hash, build timestamp)
-- Recovery metadata slots
-- An author signature
-- Post-encryption approval seals
+[age](https://github.com/FiloSottile/age) is a simple, modern, and secure file encryption tool.
 
-This makes the capsule self-describing, verifiable, and policy-checkable without needing the decryption password.
+**Lvau vs age:**
+- `age` is designed for pure Unix philosophy: stdin to stdout stream encryption.
+- Lvau is designed for **structured capsules**. A Lvau capsule contains an authenticated manifest, author signatures, release metadata, and recipient groups.
+- Lvau explicitly avoids being "just another stream cipher." Instead, it acts as a smart container for secrets and bundles that can be verified and managed *without* decrypting the payload first.
 
-## When to use other tools
+## Why not VeraCrypt?
 
-**Age**
-Use [age](https://github.com/FiloSottile/age) if you need a simple, audited, and widely-trusted file encryption tool. `age` is the gold standard for simple file encryption. Lvau does not claim to be more secure than `age`.
+VeraCrypt creates virtual encrypted disks within a file and mounts them as real disks.
 
-**VeraCrypt**
-Use [VeraCrypt](https://www.veracrypt.fr/) if you need full-disk encryption, plausible deniability, or hidden encrypted volumes. Lvau does not provide plausible deniability.
+**Lvau vs VeraCrypt:**
+- VeraCrypt provides real-time, transparent file system access (perfect for full-disk encryption or massive active archives).
+- Lvau is an **artifact processor**. You seal files and directories into a single `.lvau` file for safe transport, git storage, or automated pipelines. Lvau does not require system privileges or drivers to mount filesystems.
 
-**Cryptomator**
-Use [Cryptomator](https://cryptomator.org/) if you need transparent, cloud-synced encrypted vaults. Cryptomator integrates directly with file explorers, whereas Lvau is an explicit pack/unpack tool.
+## Why not Cryptomator?
 
-**SOPS**
-Use [SOPS](https://github.com/getsops/sops) if you need to encrypt specific values within JSON/YAML configuration files for GitOps workflows. Lvau encrypts entire files/directories, not just values within structured files (though structured secrets are planned for future releases).
+Cryptomator provides transparent client-side encryption for your cloud files.
 
-## When to use Lvau
+**Lvau vs Cryptomator:**
+- Cryptomator encrypts each file individually to allow transparent syncing via Dropbox, Google Drive, etc.
+- Lvau treats directories as **sealed bundles**. The bundle is atomic and signed, preventing attackers from modifying individual files or metadata unnoticed.
 
-- **Sealed Directory Bundles**: You want to encrypt a folder containing multiple files (like project secrets) into a single, verifiable artifact.
-- **Signed Provenance**: You want to prove who created an encrypted backup without revealing the decryption password.
-- **Preflight Checks & Policies**: You want to enforce that all encrypted artifacts in your organization use the `paranoid` profile and are signed by an approved key *before* anyone attempts to decrypt them.
-- **Approval Seals**: You want a CI/CD pipeline to add a cryptographic "seal of approval" to an existing encrypted artifact, without ever possessing the decryption key.
-- **Recipient Groups**: You want to easily encrypt a file for multiple team members using a shared `group.toml` file.
-- **Recovery Integration**: You want a tool that can attach offline recovery metadata (like Shamir shares) directly to the encrypted file's public header for emergency access by administrators.
+## Why not SOPS?
 
-Lvau is honest, boring, testable, and built on standard cryptographic primitives (XChaCha20-Poly1305, Argon2id, Ed25519). It doesn't claim "military grade" security, and it doesn't invent custom ciphers. It simply combines reliable cryptography with a capsule architecture that serves developer and operational workflows.
+SOPS is an editor of encrypted files that supports YAML, JSON, ENV, INI, and BINARY formats.
+
+**Lvau vs SOPS:**
+- SOPS is built heavily around cloud KMS (AWS KMS, GCP KMS, Azure Key Vault) and PGP.
+- Lvau is designed for **local-first developers** and CI/CD environments. It provides native CLI secrets management (`lvau-cli secret`) without depending on external cloud providers, and uses modern, post-quantum ready cryptography (X25519 + ML-KEM-768) rather than PGP.
+- Lvau includes strict **Capsule Policies**, ensuring that secrets cannot be modified by individuals without satisfying M-of-N multi-signature approvals.
