@@ -27,14 +27,14 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 
 ## What Makes Lvau Different?
 
-Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool excels at a specific use case. Lvau focuses on a different combination:
+Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool excels at a specific use case. 
 
-1. **Capsule architecture** — A Lvau capsule is an `.lvau` envelope that can hold an encrypted payload, an encrypted private manifest, public release metadata, and an author signature.
-2. **Capsule policy** — Check capsules against TOML policy files. Enforce required algorithms, KDF costs, or signatures before encrypting or verifying.
-3. **Recipient groups** — Encrypt for multiple recipients using TOML-based recipient group definitions.
-4. **Approval seals** — Add Ed25519 approval signatures to capsules without altering the payload or needing the decryption password.
-5. **Inspectable & Diffable** — Read the public envelope header without the password. Generate metadata reports or diff the structure of two capsules without exposing file contents.
-6. **Boring cryptography** — XChaCha20-Poly1305 AEAD, Argon2id KDF, HKDF-SHA256. No custom ciphers as security boundaries. Honest positioning.
+**Honest assessment:**
+- **age** is excellent for simple file encryption.
+- **VeraCrypt** is excellent for disk/container encryption.
+- **Cryptomator** is excellent for cloud-synced vaults.
+- **SOPS** is excellent for structured secrets.
+- **Lvau** focuses on Rust, inspectable envelopes, signed encrypted artifacts, sealed bundles, recovery workflows, CLI-first automation, and local developer workflows.
 
 ### Comparison
 
@@ -44,21 +44,13 @@ Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool ex
 | Directory bundles | ✅ | — | — | ✅ | — |
 | Disk/container encryption | — | — | ✅ | — | — |
 | Cloud vault sync | — | — | — | ✅ | — |
-| Structured secrets (JSON/YAML) | planned | — | — | — | ✅ |
-| Capsule policy / linting | ✅ | — | — | — | — |
-| Recipient groups | ✅ | — | — | — | — |
+| Structured secrets | planned | — | — | — | ✅ |
+| Capsule policy & recovery | ✅ | — | — | — | — |
 | Signed artifacts & Approvals | ✅ | — | — | — | ✅ |
 | CLI automation | ✅ | ✅ | limited | — | ✅ |
 | GUI | ✅ | — | ✅ | ✅ | — |
 | Formally audited | **no** | **yes** | **yes** | **yes** | varies |
-| Rust implementation | ✅ | ✅ (Go) | C++ | Java | Go |
-
-**Honest assessment:**
-- **age** is excellent for simple, audited file encryption. If you need nothing else, use age.
-- **VeraCrypt** is excellent for full-disk and container encryption.
-- **Cryptomator** is excellent for transparent cloud-synced vaults.
-- **SOPS** is excellent for structured secret management in GitOps workflows.
-- **Lvau** is an encrypted capsule toolkit for local developer workflows. It is designed when you need signed, policy-checked, recoverable encrypted artifacts.
+| Implementation | Rust | Go | C++ | Java | Go |
 
 ## Features
 
@@ -209,6 +201,7 @@ lvau-cli decrypt --in-file output.lvau --out-file input.restored.txt --priv-key 
 lvau-cli bundle pack --in-dir ./project-secrets/ --out-file secrets.lvau --password
 lvau-cli bundle inspect --in-file secrets.lvau
 lvau-cli bundle list --in-file secrets.lvau --password
+lvau-cli bundle verify --in-file secrets.lvau --password
 lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password
 lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password --dry-run
 ```
@@ -219,6 +212,37 @@ lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password 
 lvau-cli sign-keygen --out-base maintainer
 lvau-cli sign --in-file release.lvau --signing-key maintainer.lvau-sign --out-file release-signed.lvau
 lvau-cli verify-signature --in-file release-signed.lvau --verify-key maintainer.lvau-verify
+```
+
+### Recovery Shares
+
+Split a master key into Shamir shares for secure offline recovery:
+
+```sh
+lvau-cli recovery split --in-key my-identity.lvau-key --shares 5 --threshold 3 --out-dir ./shares/
+lvau-cli recovery inspect --share ./shares/share-1.lvau-share
+lvau-cli recovery combine --shares-dir ./shares/ --out-key restored.lvau-key
+```
+
+### Rekey / Recipient Slots
+
+Wrap the data encryption key for multiple recipients without full re-encryption:
+
+```sh
+lvau-cli rekey add-recipient --in-file secrets.lvau --out-file secrets-shared.lvau --pub-key alice.lvau-pub
+lvau-cli rekey list-recipients --in-file secrets-shared.lvau
+lvau-cli rekey remove-recipient --in-file secrets-shared.lvau --out-file secrets-revoked.lvau --recipient 0xABC123
+```
+
+### Structured Secret Mode
+
+Lightweight developer workflows for dotfiles and configuration:
+
+```sh
+lvau-cli secret encrypt --in-file .env --out-file .env.lvau --format dotenv --password
+lvau-cli secret edit --in-file .env.lvau --password
+lvau-cli secret print --in-file .env.lvau --password --redact
+lvau-cli secret decrypt --in-file .env.lvau --out-file .env --password
 ```
 
 Use `--force` to replace existing output files. Without `--force`, Lvau refuses to overwrite.

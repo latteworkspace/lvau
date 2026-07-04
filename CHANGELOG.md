@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-07-04
+## [0.4.0] - Unreleased
 
 ### Added
 - **Capsule Policy**: Enforce strict linting rules on `.lvau` capsules before creation or at inspection time via `CapsulePolicy` TOML specification.
@@ -15,8 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Verification Reporting**: Full static and dynamic verification reports via `lvau-cli report`.
 
 ### Changed
-- Differentiated Lvau as an "encrypted capsule toolkit" prioritizing inspectability, policy compliance, and safe developer workflows.
 - Extensively modified `lvau-protocol` to support `approvals`, `content_type`, `signature`, `public_label`, `release_metadata`, `policy_overridden`, and `recovery_metadata`.
+
+## [0.3.0] - 2026-07-04
+
+### Added
+- **Sealed Bundle Mode**: Full implementation of `bundle pack`, `extract`, `inspect`, `list`, and `verify` with dry-run capabilities and path traversal protections.
+- **Signed Envelopes**: Optional Ed25519 signatures covering public envelope and ciphertext via `sign-keygen`, `sign`, and `verify-signature`.
+- **Recovery Shares**: Split master keys into Shamir Secret Sharing (SSS) shares via `recovery split`, `combine`, and `inspect`.
+- **Rekey / Recipient Slots**: Support for multi-recipient data encryption key (DEK) wrapping.
+- **Structured Secret Mode**: Developer workflows for dotfiles via `secret encrypt`, `edit`, `decrypt`, and `print --redact`.
+- **GUI Improvements**: Full native UI support for bundle extraction, signature verification, and recovery workflows.
+- **Hardened Testing**: Comprehensive test suite including corrupt-envelope, truncated-file, path traversal, and wrong-password checks.
+
+### Changed
+- Differentiated Lvau as a "sealed encryption toolkit" prioritizing inspectability, recoverable artifacts, and safe developer workflows.
+- Strengthened atomic writes and secret zeroization.
 
 ## [0.2.0] - 2026-07-03
 

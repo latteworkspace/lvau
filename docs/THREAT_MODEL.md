@@ -144,9 +144,9 @@ These are widely-used, community-reviewed crates. Lvau does not implement any cr
 
 ### Lost password
 
-If you lose your password, **your data is unrecoverable**. There is no master key, no built-in backdoor. This is by design.
+If you lose your password and haven't set up offline recovery shares, **your data is unrecoverable**. There is no master key backdoor.
 
-(Lvau capsules have a `recovery_metadata` slot where third-party offline recovery keys or Shamir shares can be attached, but Lvau itself does not implement a built-in recovery backdoor).
+Lvau supports **Shamir Secret Sharing** (`lvau-cli recovery split`) to split a keypair or master key into offline recovery shares, allowing reconstruction if the primary password is lost. Without this explicit setup, recovery is impossible.
 
 ### Corrupted files
 
