@@ -164,6 +164,10 @@ Lvau does not manage backups. You are responsible for:
 - Backing up your signing keys (`.lvau-sign`, `.lvau-verify`) if using signatures
 - Storing backups in a separate location
 
+### Rekeying and Recipient Modification (Deferred to v0.4.0)
+
+In v0.3.0, it is not possible to safely modify an existing `.lvau` capsule in place to add or remove recipients, or to re-key it without decrypting and re-encrypting the payload. Multi-recipient encryption is fully supported when creating new hybrid keypair capsules, but subsequent modification is deferred to v0.4.0 to ensure cryptographic integrity. If you need to change passwords or recipients, you must decrypt the file and create a new `.lvau` capsule.
+
 ## Recommended usage
 
 - Encrypting personal files before uploading to cloud storage

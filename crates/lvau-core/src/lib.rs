@@ -7,3 +7,4 @@ pub mod preflight;
 pub mod release;
 pub mod report;
 pub mod signing;
+pub mod recovery;

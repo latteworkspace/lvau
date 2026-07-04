@@ -4,9 +4,9 @@ use eframe::egui;
 use log::{LevelFilter, Log, Metadata, Record};
 use lvau_core::crypto::{
     decrypt_file_keypair, decrypt_file_password, encrypt_file_keypairs, encrypt_file_password,
-    inspect_envelope,
     keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
 };
+use lvau_core::preflight::run_preflight;
 use lvau_protocol::envelope::SecurityProfile;
 use secrecy::Secret;
 use std::io::Write;
@@ -236,27 +236,39 @@ impl eframe::App for LvauGuiApp {
             {
                 if let Some(in_file) = &self.in_file {
                     if self.mode == OperationMode::Inspect {
-                        match inspect_envelope(in_file) {
-                            Ok(header) => {
-                                let magic_str = std::str::from_utf8(&header.magic).unwrap_or("????");
-                                let mut details = format!("Magic: {}\nVersion: {}\nProfile: {:?}\nAlgorithm: {:?}\nRecipients: {}\n",
-                                    magic_str, header.version, header.profile, header.algorithm, header.recipients.len());
+                        let verify_path = in_file.with_extension("lvau-verify");
+                        let v_key = if verify_path.exists() { lvau_core::signing::load_verify_key(&verify_path).ok() } else { None };
+                        
+                        let pol_path = std::path::Path::new(".lvau-policy.toml");
+                        let p_key = if pol_path.exists() { lvau_core::policy::CapsulePolicy::load_from_file(pol_path).ok() } else { None };
 
-                                if let Some(kdf) = header.kdf {
-                                    match kdf {
-                                        lvau_protocol::envelope::KdfParams::Argon2id { m_cost, t_cost, p_cost, .. } => {
-                                            details.push_str(&format!("KDF: Argon2id (m={} KiB, t={}, p={})\n", m_cost, t_cost, p_cost));
-                                        }
-                                    }
-                                } else {
-                                    details.push_str("KDF: None (keypair-based)\n");
+                        let res = run_preflight(in_file, v_key.as_ref(), p_key.as_ref());
+                        if res.parse_ok {
+                            let mut details = format!(
+                                "Version: {}\nProfile: {}\nAlgorithm: {}\nContent-Type: {}\n",
+                                res.version, res.profile, res.algorithm, res.content_type
+                            );
+                            
+                            details.push_str(&format!("Signed: {}\n", res.signature_present));
+                            if let Some(true) = res.signature_valid {
+                                let fp = res.signer_fingerprint.as_deref().unwrap_or("Unknown");
+                                details.push_str(&format!("Signature Valid: Yes (Fingerprint: {})\n", fp));
+                            } else if res.signature_present && v_key.is_some() {
+                                details.push_str("Signature Valid: INVALID!\n");
+                            } else if res.signature_present {
+                                details.push_str("Signature Valid: Unchecked (No .lvau-verify found)\n");
+                            }
+                            
+                            if p_key.is_some() {
+                                details.push_str(&format!("\nPolicy Checked (.lvau-policy.toml): {}\n", res.policy_ok.unwrap_or(false)));
+                                for v in res.policy_violations {
+                                    details.push_str(&format!("  Violation: {}\n", v));
                                 }
-
-                                self.status = format!("Inspect Successful:\n{}", details);
                             }
-                            Err(e) => {
-                                self.status = format!("Error inspecting file: {:?}", e);
-                            }
+                            
+                            self.status = format!("Inspect Successful:\n{}", details);
+                        } else {
+                            self.status = format!("Error inspecting file: {:?}", res.parse_error);
                         }
                     } else {
                         let mut file_dialog = rfd::FileDialog::new();

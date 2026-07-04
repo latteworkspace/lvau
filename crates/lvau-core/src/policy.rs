@@ -235,12 +235,12 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     if !policy.allow_experimental
         && (envelope.header.profile == SecurityProfile::Extreme
             || envelope.header.profile == SecurityProfile::Paranoid)
-        {
-            result.violations.push(PolicyViolation {
-                rule: "allow_experimental".into(),
-                message: "Experimental profiles (Cascade/LCO) are disallowed by policy.".into(),
-            });
-        }
+    {
+        result.violations.push(PolicyViolation {
+            rule: "allow_experimental".into(),
+            message: "Experimental profiles (Cascade/LCO) are disallowed by policy.".into(),
+        });
+    }
 
     // 8. Public label allowed
     if !policy.public_label_allowed && envelope.public_label.is_some() {
@@ -259,13 +259,13 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
                 .unwrap()
                 .project_name
                 .is_none())
-        {
-            // "created_by" is effectively project_name or similar. We check release_metadata.
-            result.violations.push(PolicyViolation {
-                rule: "created_by_required".into(),
-                message: "Policy requires author/project metadata, but none was found.".into(),
-            });
-        }
+    {
+        // "created_by" is effectively project_name or similar. We check release_metadata.
+        result.violations.push(PolicyViolation {
+            rule: "created_by_required".into(),
+            message: "Policy requires author/project metadata, but none was found.".into(),
+        });
+    }
 
     // 10. Recipient count
     let count = envelope.header.recipients.len() as u32;

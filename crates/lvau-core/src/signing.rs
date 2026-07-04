@@ -362,16 +362,15 @@ pub fn verify_approvals(in_file: &Path, verify_key: &VerifyingKey) -> Result<boo
 
     let mut found_valid = false;
     for approval in &envelope.approvals {
-        if approval.signer_fingerprint == fingerprint
-            && approval.signature.len() == 64 {
-                let mut sig_bytes = [0u8; 64];
-                sig_bytes.copy_from_slice(&approval.signature);
-                let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        if approval.signer_fingerprint == fingerprint && approval.signature.len() == 64 {
+            let mut sig_bytes = [0u8; 64];
+            sig_bytes.copy_from_slice(&approval.signature);
+            let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
-                if verify_key.verify(&envelope.aad_hash, &signature).is_ok() {
-                    found_valid = true;
-                }
+            if verify_key.verify(&envelope.aad_hash, &signature).is_ok() {
+                found_valid = true;
             }
+        }
     }
 
     Ok(found_valid)

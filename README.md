@@ -44,7 +44,7 @@ Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool ex
 | Directory bundles | ✅ | — | — | ✅ | — |
 | Disk/container encryption | — | — | ✅ | — | — |
 | Cloud vault sync | — | — | — | ✅ | — |
-| Structured secrets | planned | — | — | — | ✅ |
+| Structured secrets | ✅ | — | — | — | ✅ |
 | Capsule policy & recovery | ✅ | — | — | — | — |
 | Signed artifacts & Approvals | ✅ | — | — | — | ✅ |
 | CLI automation | ✅ | ✅ | limited | — | ✅ |
@@ -69,6 +69,8 @@ Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool ex
 
 - **Sealed bundle mode** — Pack a directory into one encrypted `.lvau` file with an authenticated manifest. Configurable metadata privacy and size padding.
 - **Signed provenance** — Sign encrypted artifacts with Ed25519. Verify authorship without the decryption password.
+- **Recovery shares** — Split keys or files into Shamir Secret Sharing recovery shards.
+- **Structured secrets** — Direct CLI commands (`lvau-cli secret`) to encrypt, decrypt, and edit `.env` or API keys securely in-place, integrated with local policies.
 - **Hardened tests** — Property roundtrip tests, corrupt envelope tests, path traversal tests, and more.
 - **`--json` output** — Machine-readable output for inspect and verify.
 

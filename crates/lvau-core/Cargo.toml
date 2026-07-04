@@ -30,6 +30,7 @@ blake3 = "1.5"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 walkdir = "2.5"
 toml = "0.8"
+sharks = "0.5"
 
 [dev-dependencies]
 tempfile = "3.10"

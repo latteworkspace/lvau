@@ -12,9 +12,10 @@ use lvau_core::signing::{
     generate_signing_keypair, key_fingerprint, load_signing_key, load_verify_key, save_signing_key,
     save_verify_key, sign_file, verify_signature,
 };
+use lvau_core::recovery::{combine_shares, split_secret, RecoveryShare};
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
-use secrecy::Secret;
+use secrecy::{ExposeSecret, Secret};
 use serde::Serialize;
 use std::fmt;
 use std::fs;
@@ -252,6 +253,11 @@ enum Commands {
         #[command(subcommand)]
         action: RecoveryAction,
     },
+    /// Manage small structured secrets (API keys, .env files).
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
     /// Sign an encrypted .lvau file with an Ed25519 signing key.
     Sign {
         /// Input .lvau file to sign.
@@ -375,6 +381,72 @@ enum RecoveryAction {
         /// Replace existing output file.
         #[arg(short, long)]
         force: bool,
+    },
+    /// Split a file (e.g. a key) into Shamir Secret Sharing recovery shares.
+    Split {
+        /// Input file to split
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Number of shares to generate
+        #[arg(short, long)]
+        shares: u8,
+
+        /// Threshold of shares required to combine
+        #[arg(short, long)]
+        threshold: u8,
+
+        /// Output directory for the shares
+        #[arg(short, long)]
+        out_dir: PathBuf,
+    },
+    /// Combine Shamir shares to recover the data.
+    Combine {
+        /// Directory containing the share files
+        #[arg(long)]
+        shares_dir: PathBuf,
+
+        /// Output file for the recovered data
+        #[arg(short, long)]
+        out_file: PathBuf,
+
+        /// Replace existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Inspect a recovery share file.
+    Inspect {
+        /// Input .lvau-share file
+        #[arg(short, long)]
+        in_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretAction {
+    /// Encrypt a secret file. Outputs <in_file>.lvau
+    Encrypt {
+        /// Input file
+        #[arg(short, long)]
+        in_file: PathBuf,
+    },
+    /// Decrypt a secret file. Outputs <in_file> without .lvau
+    Decrypt {
+        /// Input .lvau file
+        #[arg(short, long)]
+        in_file: PathBuf,
+    },
+    /// Edit an encrypted secret file in your default editor
+    Edit {
+        /// Input .lvau file
+        #[arg(short, long)]
+        in_file: PathBuf,
+    },
+    /// Print the decrypted contents of a secret file to stdout
+    Print {
+        /// Input .lvau file
+        #[arg(short, long)]
+        in_file: PathBuf,
     },
 }
 
@@ -992,17 +1064,19 @@ fn run() -> Result<(), CliError> {
                     version: header.version,
                     profile: format!("{:?}", header.profile),
                     algorithm: format!("{:?}", header.algorithm),
-                    kdf: header.kdf.as_ref().map(|KdfParams::Argon2id {
-                            m_cost,
-                            t_cost,
-                            p_cost,
-                            ..
-                        }| KdfInfo {
+                    kdf: header.kdf.as_ref().map(
+                        |KdfParams::Argon2id {
+                             m_cost,
+                             t_cost,
+                             p_cost,
+                             ..
+                         }| KdfInfo {
                             algorithm: "Argon2id".to_string(),
                             m_cost: *m_cost,
                             t_cost: *t_cost,
                             p_cost: *p_cost,
-                        }),
+                        },
+                    ),
                     recipient_count: header.recipients.len(),
                     recipients: header
                         .recipients
@@ -1227,7 +1301,9 @@ fn run() -> Result<(), CliError> {
                     }
                 }
 
-                if let lvau_core::preflight::PreflightStatus::Fail = res.status { std::process::exit(1) }
+                if let lvau_core::preflight::PreflightStatus::Fail = res.status {
+                    std::process::exit(1)
+                }
             }
         }
         Commands::Report {
@@ -1694,6 +1770,174 @@ fn run() -> Result<(), CliError> {
                 )?;
 
                 println!("Attached recovery metadata to {}", out_file.display());
+            }
+            RecoveryAction::Split {
+                in_file,
+                shares,
+                threshold,
+                out_dir,
+            } => {
+                ensure_input_file(&in_file)?;
+                if !out_dir.exists() {
+                    fs::create_dir_all(&out_dir).map_err(|e| CliError::Io(e))?;
+                }
+                
+                let secret_data = fs::read(&in_file).map_err(|e| CliError::Io(e))?;
+                let generated_shares = split_secret(&secret_data, shares, threshold)
+                    .map_err(|e| CliError::Message(format!("Failed to split secret: {:?}", e)))?;
+                
+                let file_stem = in_file.file_stem().and_then(|s| s.to_str()).unwrap_or("secret");
+                
+                for share in generated_shares {
+                    let share_path = out_dir.join(format!("{}.{}.lvau-share", file_stem, share.index));
+                    share.to_file(&share_path)
+                        .map_err(|e| CliError::Message(format!("Failed to write share: {:?}", e)))?;
+                    println!("Generated share: {}", share_path.display());
+                }
+                println!("Successfully generated {} shares (threshold: {}) in {}", shares, threshold, out_dir.display());
+            }
+            RecoveryAction::Combine {
+                shares_dir,
+                out_file,
+                force,
+            } => {
+                ensure_output_available(&out_file, force)?;
+                
+                let mut loaded_shares = Vec::new();
+                for entry in fs::read_dir(&shares_dir).map_err(|e| CliError::Io(e))? {
+                    let entry = entry.map_err(|e| CliError::Io(e))?;
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("lvau-share") {
+                        match RecoveryShare::from_file(&path) {
+                            Ok(share) => loaded_shares.push(share),
+                            Err(e) => eprintln!("Warning: Failed to load share {}: {:?}", path.display(), e),
+                        }
+                    }
+                }
+                
+                if loaded_shares.is_empty() {
+                    return Err(CliError::Message("No valid .lvau-share files found in directory".into()));
+                }
+                
+                let recovered = combine_shares(&loaded_shares)
+                    .map_err(|e| CliError::Message(format!("Failed to combine shares: {:?}", e)))?;
+                
+                fs::write(&out_file, recovered).map_err(|e| CliError::Io(e))?;
+                println!("Successfully recovered secret to {}", out_file.display());
+            }
+            RecoveryAction::Inspect { in_file } => {
+                ensure_input_file(&in_file)?;
+                let share = RecoveryShare::from_file(&in_file)
+                    .map_err(|e| CliError::Message(format!("Failed to read share: {:?}", e)))?;
+                
+                println!("Recovery Share:");
+                println!("  Version:     {}", share.version);
+                println!("  Index:       {}", share.index);
+                println!("  Threshold:   {}", share.threshold);
+                println!("  Fingerprint: {}", hex::encode(&share.fingerprint));
+                println!("  Data Length: {} bytes", share.share_data.len());
+            }
+        },
+        Commands::Secret { action } => match action {
+            SecretAction::Encrypt { in_file } => {
+                ensure_input_file(&in_file)?;
+                let out_file = in_file.with_extension(format!("{}.lvau", in_file.extension().and_then(|e| e.to_str()).unwrap_or("")));
+                
+                let pwd = Secret::new(rpassword::prompt_password("Enter password for secret: ").map_err(|e| CliError::Io(e))?);
+                let confirm = Secret::new(rpassword::prompt_password("Confirm password: ").map_err(|e| CliError::Io(e))?);
+                if pwd.expose_secret() != confirm.expose_secret() {
+                    return Err(CliError::Message("Passwords do not match".into()));
+                }
+
+                let pol_path = Path::new(".lvau-policy.toml");
+                let pol = if pol_path.exists() {
+                    Some(lvau_core::policy::CapsulePolicy::load_from_file(pol_path)
+                        .map_err(|e| CliError::Message(format!("Failed to load local policy: {}", e)))?)
+                } else {
+                    None
+                };
+
+                encrypt_file_password(
+                    &in_file,
+                    &out_file,
+                    pwd,
+                    None,
+                    SecurityProfile::Fast,
+                    None,
+                    pol.as_ref(),
+                    false,
+                )
+                .map_err(|e| CliError::Message(format!("Crypto error: {:?}", e)))?;
+                
+                println!("Secret encrypted to {}", out_file.display());
+            }
+            SecretAction::Decrypt { in_file } => {
+                ensure_input_file(&in_file)?;
+                let out_file = in_file.with_extension("");
+                ensure_output_available(&out_file, false)?;
+                
+                let pwd = Secret::new(rpassword::prompt_password("Enter password to decrypt: ").map_err(|e| CliError::Io(e))?);
+                decrypt_file_password(&in_file, &out_file, pwd, None, None)
+                    .map_err(|e| CliError::Message(format!("Crypto error: {:?}", e)))?;
+                
+                println!("Secret decrypted to {}", out_file.display());
+            }
+            SecretAction::Edit { in_file } => {
+                ensure_input_file(&in_file)?;
+                
+                let pwd = Secret::new(rpassword::prompt_password("Enter password to edit: ").map_err(|e| CliError::Io(e))?);
+                
+                let dir = tempfile::tempdir().map_err(|e| CliError::Io(e))?;
+                let temp_file = dir.path().join(in_file.file_name().unwrap());
+                
+                decrypt_file_password(&in_file, &temp_file, pwd.clone(), None, None)
+                    .map_err(|e| CliError::Message(format!("Crypto error: {:?}", e)))?;
+                
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+                
+                let status = std::process::Command::new(&editor)
+                    .arg(&temp_file)
+                    .status()
+                    .map_err(|e| CliError::Message(format!("Failed to launch editor {}: {}", editor, e)))?;
+                
+                if !status.success() {
+                    return Err(CliError::Message("Editor exited with non-zero status. Changes aborted.".into()));
+                }
+                
+                let pol_path = Path::new(".lvau-policy.toml");
+                let pol = if pol_path.exists() {
+                    Some(lvau_core::policy::CapsulePolicy::load_from_file(pol_path)
+                        .map_err(|e| CliError::Message(format!("Failed to load local policy: {}", e)))?)
+                } else {
+                    None
+                };
+                
+                encrypt_file_password(
+                    &temp_file,
+                    &in_file,
+                    pwd,
+                    None,
+                    SecurityProfile::Fast,
+                    None,
+                    pol.as_ref(),
+                    false,
+                )
+                .map_err(|e| CliError::Message(format!("Crypto error: {:?}", e)))?;
+                
+                println!("Secret {} updated successfully.", in_file.display());
+            }
+            SecretAction::Print { in_file } => {
+                ensure_input_file(&in_file)?;
+                let pwd = Secret::new(rpassword::prompt_password("Enter password to print: ").map_err(|e| CliError::Io(e))?);
+                
+                let dir = tempfile::tempdir().map_err(|e| CliError::Io(e))?;
+                let temp_file = dir.path().join("print.tmp");
+                
+                decrypt_file_password(&in_file, &temp_file, pwd, None, None)
+                    .map_err(|e| CliError::Message(format!("Crypto error: {:?}", e)))?;
+                
+                let content = fs::read_to_string(&temp_file).map_err(|e| CliError::Io(e))?;
+                println!("{}", content);
             }
         },
         Commands::SignKeygen { out_base, force } => {
