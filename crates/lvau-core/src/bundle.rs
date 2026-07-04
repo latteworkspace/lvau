@@ -169,6 +169,8 @@ pub fn pack_directory(
     allow_symlinks: bool,
     padding: &PaddingProfile,
     force: bool,
+    policy: Option<&crate::policy::CapsulePolicy>,
+    allow_policy_override: bool,
 ) -> Result<BundleManifest, BundleError> {
     // Check output doesn't exist
     if out_file.exists() && !force {
@@ -237,7 +239,7 @@ pub fn pack_directory(
 
     fs::write(&temp_plain, &bundle_payload).map_err(BundleError::Io)?;
 
-    let result = encrypt_file_password(&temp_plain, out_file, password, None, profile, None);
+    let result = encrypt_file_password(&temp_plain, out_file, password, None, profile, None, policy, allow_policy_override);
 
     // Always clean up temp file
     let _ = fs::remove_file(&temp_plain);

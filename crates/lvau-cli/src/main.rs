@@ -87,6 +87,14 @@ enum Commands {
         /// Replace an existing output file.
         #[arg(short, long)]
         force: bool,
+
+        /// Check against a local CapsulePolicy TOML file before encrypting.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+
+        /// Allow overriding policy violations (logs an override flag in metadata).
+        #[arg(long, default_value_t = false)]
+        allow_policy_override: bool,
     },
     /// Decrypt a file.
     Decrypt {
@@ -162,6 +170,29 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Run preflight verification on an encrypted capsule (does not decrypt data).
+    Preflight {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Verify key (.lvau-verify) to check author signature.
+        #[arg(long)]
+        verify_key: Option<PathBuf>,
+
+        /// Policy file to lint the capsule against.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+
+        /// Output in JSON format.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Manage and lint capsule policies.
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
+    },
     /// Pack, extract, inspect, or verify encrypted directory bundles.
     Bundle {
         #[command(subcommand)]
@@ -206,6 +237,38 @@ enum Commands {
         in_file: PathBuf,
 
         /// Path to the verifying key (.lvau-verify).
+        #[arg(long)]
+        verify_key: PathBuf,
+    },
+    /// Add an approval seal to an encrypted .lvau capsule.
+    Approve {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Output approved .lvau file.
+        #[arg(short, long)]
+        out_file: PathBuf,
+
+        /// Path to the signing key (.lvau-sign).
+        #[arg(long)]
+        signing_key: PathBuf,
+
+        /// Optional comment for this approval.
+        #[arg(long)]
+        comment: Option<String>,
+
+        /// Replace an existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Verify approval seals on an .lvau capsule.
+    Approvals {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Verify key (.lvau-verify) to check for.
         #[arg(long)]
         verify_key: PathBuf,
     },
@@ -258,12 +321,50 @@ enum BundleAction {
         /// Replace an existing output file.
         #[arg(short, long)]
         force: bool,
+        
+        /// Check against a local CapsulePolicy TOML file before encrypting.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+
+        /// Allow overriding policy violations (logs an override flag in metadata).
+        #[arg(long, default_value_t = false)]
+        allow_policy_override: bool,
     },
     /// Inspect public envelope metadata of a bundle.
     Inspect {
         /// Input .lvau bundle file.
         #[arg(long)]
         in_file: PathBuf,
+
+        /// Output in JSON format.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Diff two encrypted bundles.
+    Diff {
+        /// Old .lvau bundle file.
+        #[arg(long)]
+        old_file: PathBuf,
+
+        /// New .lvau bundle file.
+        #[arg(long)]
+        new_file: PathBuf,
+
+        /// Use password for old file.
+        #[arg(long, default_value_t = false)]
+        old_password: bool,
+
+        /// Read the password for old file from a local file.
+        #[arg(long)]
+        old_password_file: Option<PathBuf>,
+
+        /// Use password for new file.
+        #[arg(long, default_value_t = false)]
+        new_password: bool,
+
+        /// Read the password for new file from a local file.
+        #[arg(long)]
+        new_password_file: Option<PathBuf>,
 
         /// Output in JSON format.
         #[arg(long, default_value_t = false)]
@@ -330,6 +431,34 @@ enum BundleAction {
         /// Read the password from a local file instead of prompting.
         #[arg(long)]
         password_file: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyAction {
+    /// Inspect a policy file.
+    Inspect {
+        #[arg(long)]
+        in_file: PathBuf,
+    },
+    /// Lint an existing .lvau file against a policy.
+    Lint {
+        #[arg(long)]
+        in_file: PathBuf,
+        
+        #[arg(long)]
+        policy: PathBuf,
+        
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Create a new default policy file.
+    Create {
+        #[arg(long)]
+        out_file: PathBuf,
+        
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -602,6 +731,8 @@ fn run() -> Result<(), CliError> {
             seed_file,
             sfx,
             force,
+            policy,
+            allow_policy_override,
         } => {
             ensure_input_file(&in_file)?;
             ensure_output_available(&out_file, force)?;
@@ -627,6 +758,12 @@ fn run() -> Result<(), CliError> {
             let pb = get_progress_bar(file_len);
             let mut progress_callback = |bytes: u64| pb.set_position(bytes);
 
+            let pol = match policy {
+                Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                None => None,
+            };
+
             if let Some(pub_path) = pub_key {
                 let pk = HybridPublicKey::load_from_file(&pub_path)?;
                 encrypt_file_keypair(
@@ -635,6 +772,8 @@ fn run() -> Result<(), CliError> {
                     &pk,
                     sec_profile,
                     Some(&mut progress_callback),
+                    pol.as_ref(),
+                    allow_policy_override,
                 )?;
             } else {
                 let pwd = password_secret(password, password_file.as_deref(), true)?
@@ -647,6 +786,8 @@ fn run() -> Result<(), CliError> {
                     seed_val,
                     sec_profile,
                     Some(&mut progress_callback),
+                    pol.as_ref(),
+                    allow_policy_override,
                 )?;
             }
             pb.finish_and_clear();
@@ -851,6 +992,166 @@ fn run() -> Result<(), CliError> {
                 println!("Verification successful: {}", in_file.display());
             }
         }
+        Commands::Preflight { in_file, verify_key, policy, json } => {
+            ensure_input_file(&in_file)?;
+            
+            let mut vkey = None;
+            if let Some(vk_path) = verify_key {
+                let key = lvau_core::signing::load_verify_key(&vk_path)?;
+                vkey = Some(key);
+            }
+            
+            let pol = match policy {
+                Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                None => None,
+            };
+
+            let res = lvau_core::preflight::run_preflight(&in_file, vkey.as_ref(), pol.as_ref());
+            
+            if json {
+                println!("{}", serde_json::to_string_pretty(&res).unwrap());
+            } else {
+                println!("Preflight Report for: {}", in_file.display());
+                println!("===========================================");
+                println!("Status: {:?}", res.status);
+                println!("Parse OK: {}", res.parse_ok);
+                if let Some(err) = res.parse_error {
+                    println!("Parse Error: {}", err);
+                }
+                if res.parse_ok {
+                    println!("Version: {}", res.version);
+                    println!("Content Type: {}", res.content_type);
+                    println!("Security Profile: {}", res.profile);
+                    println!("Algorithm: {}", res.algorithm);
+                    println!("Recipient Slots: {}", res.recipient_count);
+                    println!("Public Hash OK: {}", res.public_hash_ok);
+                    println!("Signature Present: {}", res.signature_present);
+                    if let Some(fp) = res.signer_fingerprint {
+                        println!("Signer Fingerprint: {}", fp);
+                    }
+                    if let Some(v) = res.signature_valid {
+                        println!("Signature Valid: {}", v);
+                    }
+                    println!("Has Recovery Metadata: {}", res.has_recovery_metadata);
+                    println!("Has Release Metadata: {}", res.has_release_metadata);
+                    println!("Policy Overridden: {}", res.policy_overridden);
+                    if let Some(p) = res.policy_ok {
+                        println!("Policy Checked: {}", if p { "PASS" } else { "FAIL" });
+                    }
+                    if !res.experimental_flags.is_empty() {
+                        println!("Experimental Flags: {}", res.experimental_flags.join(", "));
+                    }
+                    if !res.approvals.is_empty() {
+                        println!("Approvals ({} seals):", res.approvals.len());
+                        for app in res.approvals {
+                            println!("- {}", app);
+                        }
+                    }
+                }
+                
+                if !res.errors.is_empty() {
+                    println!("\nErrors:");
+                    for e in res.errors {
+                        println!("- [ERROR] {}", e);
+                    }
+                }
+                if !res.warnings.is_empty() {
+                    println!("\nWarnings:");
+                    for w in res.warnings {
+                        println!("- [WARN]  {}", w);
+                    }
+                }
+                if !res.policy_violations.is_empty() {
+                    println!("\nPolicy Violations:");
+                    for v in res.policy_violations {
+                        println!("- [FAIL]  {}", v);
+                    }
+                }
+                if !res.policy_warnings.is_empty() {
+                    println!("\nPolicy Warnings:");
+                    for w in res.policy_warnings {
+                        println!("- [WARN]  {}", w);
+                    }
+                }
+                
+                match res.status {
+                    lvau_core::preflight::PreflightStatus::Fail => std::process::exit(1),
+                    _ => {}
+                }
+            }
+        }
+        Commands::Policy { action } => match action {
+            PolicyAction::Inspect { in_file } => {
+                let pol = lvau_core::policy::CapsulePolicy::load_from_file(&in_file)
+                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?;
+                println!("Policy File: {}", in_file.display());
+                println!("{}", toml::to_string_pretty(&pol).unwrap());
+            }
+            PolicyAction::Lint { in_file, policy, json } => {
+                let pol = lvau_core::policy::CapsulePolicy::load_from_file(&policy)
+                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?;
+                let (header, content_type, public_label) = lvau_core::bundle::inspect_bundle(&in_file)?;
+                
+                // Construct a mock envelope for linting
+                let mut envelope = lvau_protocol::envelope::Envelope {
+                    header,
+                    plaintext_len: 0,
+                    nonce: [0; 24],
+                    secondary_nonce: None,
+                    aad_hash: [0; 32],
+                    metadata: vec![],
+                    content_type,
+                    signature: None,
+                    public_label,
+                    approvals: vec![],
+                    release_metadata: None,
+                    policy_overridden: false,
+                    recovery_metadata: None,
+                };
+                
+                // Check if signed (a bit hacky since inspect_bundle doesn't return full envelope currently)
+                // Actually inspect_bundle doesn't return signatures. I will parse the raw envelope using bincode/postcard.
+                let data = fs::read(&in_file)?;
+                let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+                if data.len() >= 4 + env_len {
+                    if let Ok(real_env) = postcard::from_bytes::<lvau_protocol::envelope::Envelope>(&data[4..4+env_len]) {
+                        envelope = real_env;
+                    }
+                }
+                
+                let result = lvau_core::policy::lint_envelope(&envelope, &pol);
+                
+                if json {
+                    let mut json_val = serde_json::json!({
+                        "valid": result.is_valid(),
+                        "violations": result.violations.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>(),
+                        "warnings": result.warnings.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>()
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+                } else {
+                    println!("Linting artifact {} against {}", in_file.display(), policy.display());
+                    if result.is_valid() {
+                        println!("Result: PASS");
+                    } else {
+                        println!("Result: FAIL");
+                        for v in result.violations {
+                            println!("- [VIOLATION] {}: {}", v.rule, v.message);
+                        }
+                    }
+                    for w in result.warnings {
+                        println!("- [WARNING] {}: {}", w.rule, w.message);
+                    }
+                }
+            }
+            PolicyAction::Create { out_file, force } => {
+                ensure_output_available(&out_file, force)?;
+                let pol = lvau_core::policy::CapsulePolicy::default();
+                pol.save_to_file(&out_file)
+                    .map_err(|e| CliError::Message(format!("Failed to save policy: {e}")))?;
+                println!("Created default policy at {}", out_file.display());
+            }
+        },
         Commands::Bundle { action } => match action {
             BundleAction::Pack {
                 in_dir,
@@ -863,6 +1164,8 @@ fn run() -> Result<(), CliError> {
                 pad,
                 public_label: _,
                 force,
+                policy,
+                allow_policy_override,
             } => {
                 if !in_dir.is_dir() {
                     return Err(CliError::Message(format!(
@@ -877,6 +1180,12 @@ fn run() -> Result<(), CliError> {
                 let sec_profile = parse_profile(&profile)?;
                 let padding = parse_padding(&pad)?;
 
+                let pol = match policy {
+                    Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                        .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                    None => None,
+                };
+
                 let manifest = pack_directory(
                     &in_dir,
                     &out_file,
@@ -885,6 +1194,8 @@ fn run() -> Result<(), CliError> {
                     allow_symlinks,
                     &padding,
                     force,
+                    pol.as_ref(),
+                    allow_policy_override,
                 )?;
 
                 println!(
@@ -961,6 +1272,61 @@ fn run() -> Result<(), CliError> {
                     for entry in &manifest.entries {
                         println!("  {} ({} bytes)", entry.relative_path, entry.size);
                     }
+                }
+            }
+            BundleAction::Diff {
+                old_file,
+                new_file,
+                old_password,
+                old_password_file,
+                new_password,
+                new_password_file,
+                json,
+            } => {
+                ensure_input_file(&old_file)?;
+                ensure_input_file(&new_file)?;
+
+                let old_pwd = password_secret(old_password, old_password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing old password".into()))?;
+                let new_pwd = password_secret(new_password, new_password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing new password".into()))?;
+
+                let report = lvau_core::diff::diff_bundles(&old_file, old_pwd, &new_file, new_pwd)?;
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                } else {
+                    println!("Diff Report:");
+                    println!("Old: {}", old_file.display());
+                    println!("New: {}", new_file.display());
+                    println!("--------------------------------------------------");
+                    for diff in &report.files {
+                        match diff.status {
+                            lvau_core::diff::DiffStatus::Added => {
+                                println!("+ {} ({} bytes)", diff.path, diff.new_size.unwrap_or(0));
+                            }
+                            lvau_core::diff::DiffStatus::Removed => {
+                                println!("- {} ({} bytes)", diff.path, diff.old_size.unwrap_or(0));
+                            }
+                            lvau_core::diff::DiffStatus::Modified => {
+                                println!(
+                                    "~ {} ({} -> {} bytes)",
+                                    diff.path,
+                                    diff.old_size.unwrap_or(0),
+                                    diff.new_size.unwrap_or(0)
+                                );
+                            }
+                            lvau_core::diff::DiffStatus::Unchanged => {} // skip unchanged in non-JSON
+                        }
+                    }
+                    println!("--------------------------------------------------");
+                    println!(
+                        "Summary: {} added, {} removed, {} modified, {} unchanged",
+                        report.added_count,
+                        report.removed_count,
+                        report.modified_count,
+                        report.unchanged_count
+                    );
                 }
             }
             BundleAction::Extract {
@@ -1068,6 +1434,44 @@ fn run() -> Result<(), CliError> {
                 }
             }
         }
+        Commands::Approve {
+            in_file,
+            out_file,
+            signing_key,
+            comment,
+            force,
+        } => {
+            ensure_input_file(&in_file)?;
+            ensure_input_file(&signing_key)?;
+            ensure_output_available(&out_file, force)?;
+
+            let key = load_signing_key(&signing_key)?;
+            lvau_core::signing::add_approval_seal(&in_file, &out_file, &key, comment, force)?;
+
+            println!("Approval seal added: {}", out_file.display());
+        }
+        Commands::Approvals {
+            in_file,
+            verify_key,
+        } => {
+            ensure_input_file(&in_file)?;
+            ensure_input_file(&verify_key)?;
+
+            let key = load_verify_key(&verify_key)?;
+            match lvau_core::signing::verify_approvals(&in_file, &key) {
+                Ok(true) => {
+                    println!("Valid approval seal found from this key.");
+                }
+                Ok(false) => {
+                    println!("No valid approval seal found from this key.");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error checking approvals: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Doctor => {
             println!("Lvau Diagnostics");
             println!("----------------");
@@ -1139,6 +1543,8 @@ fn run_self_test() -> Result<(), CliError> {
                 None,
                 SecurityProfile::Fast,
                 None,
+                None,
+                false,
             )?;
             decrypt_file_password(
                 &enc_path,
@@ -1177,6 +1583,8 @@ fn run_self_test() -> Result<(), CliError> {
                 None,
                 SecurityProfile::Fast,
                 None,
+                None,
+                false,
             )?;
             let res = decrypt_file_password(
                 &enc_path,
@@ -1214,6 +1622,8 @@ fn run_self_test() -> Result<(), CliError> {
                 None,
                 SecurityProfile::Fast,
                 None,
+                None,
+                false,
             )?;
 
             let mut enc_data = fs::read(&enc_path)?;
@@ -1261,6 +1671,8 @@ fn run_self_test() -> Result<(), CliError> {
                 None,
                 SecurityProfile::Fast,
                 None,
+                None,
+                false,
             )?;
             decrypt_file_password(
                 &enc_path,
@@ -1294,7 +1706,7 @@ fn run_self_test() -> Result<(), CliError> {
 
             let (priv_key, pub_key) = generate_keypair();
 
-            encrypt_file_keypair(&in_path, &enc_path, &pub_key, SecurityProfile::Fast, None)?;
+            encrypt_file_keypair(&in_path, &enc_path, &pub_key, SecurityProfile::Fast, None, None, false)?;
             decrypt_file_keypair(&enc_path, &dec_path, &priv_key, None)?;
 
             let dec_data = fs::read(&dec_path)?;

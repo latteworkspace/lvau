@@ -49,6 +49,8 @@ pub enum CryptoError {
     MissingSecondaryNonce,
     #[error("Refusing to overwrite existing output file")]
     OutputExists,
+    #[error("Policy violation: {0}")]
+    PolicyViolation(String),
 }
 
 fn derive_master_key(
@@ -101,7 +103,7 @@ fn compute_aad_hash(header: &EnvelopeHeader) -> Result<[u8; 32], CryptoError> {
     Ok(hasher.finalize().into())
 }
 
-fn verify_aad_hash(envelope: &Envelope) -> Result<(), CryptoError> {
+pub fn verify_aad_hash(envelope: &Envelope) -> Result<(), CryptoError> {
     let computed_hash = compute_aad_hash(&envelope.header)?;
     if computed_hash != envelope.aad_hash {
         return Err(CryptoError::Validation(
@@ -225,6 +227,8 @@ pub fn encrypt_file_password(
     seed: Option<Secret<String>>,
     profile: SecurityProfile,
     progress_callback: Option<&mut dyn FnMut(u64)>,
+    policy: Option<&crate::policy::CapsulePolicy>,
+    allow_policy_override: bool,
 ) -> Result<(), CryptoError> {
     info!("Starting encryption of {}", input_path.display());
     let mut rng = OsRng;
@@ -299,7 +303,7 @@ pub fn encrypt_file_password(
 
     let aad_hash = compute_aad_hash(&header)?;
 
-    let envelope = Envelope {
+    let mut envelope = Envelope {
         header,
         plaintext_len,
         nonce: nonce_bytes,
@@ -309,7 +313,19 @@ pub fn encrypt_file_password(
         content_type: None,
         signature: None,
         public_label: None,
+        approvals: Vec::new(),
+        release_metadata: None,
+        policy_overridden: allow_policy_override,
+        recovery_metadata: None,
     };
+
+    if let Some(pol) = policy {
+        let result = crate::policy::lint_envelope(&envelope, pol);
+        if !result.is_valid() && !allow_policy_override {
+            let msg = result.violations.iter().map(|v| v.message.clone()).collect::<Vec<_>>().join(", ");
+            return Err(CryptoError::PolicyViolation(msg));
+        }
+    }
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
 
@@ -335,6 +351,8 @@ pub fn encrypt_file_keypair(
     recipient_pub: &HybridPublicKey,
     profile: SecurityProfile,
     progress_callback: Option<&mut dyn FnMut(u64)>,
+    policy: Option<&crate::policy::CapsulePolicy>,
+    allow_policy_override: bool,
 ) -> Result<(), CryptoError> {
     info!(
         "Starting hybrid keypair encryption for {}",
@@ -400,7 +418,7 @@ pub fn encrypt_file_keypair(
 
     let aad_hash = compute_aad_hash(&header)?;
 
-    let envelope = Envelope {
+    let mut envelope = Envelope {
         header,
         plaintext_len,
         nonce: nonce_bytes,
@@ -410,7 +428,19 @@ pub fn encrypt_file_keypair(
         content_type: None,
         signature: None,
         public_label: None,
+        approvals: Vec::new(),
+        release_metadata: None,
+        policy_overridden: allow_policy_override,
+        recovery_metadata: None,
     };
+
+    if let Some(pol) = policy {
+        let result = crate::policy::lint_envelope(&envelope, pol);
+        if !result.is_valid() && !allow_policy_override {
+            let msg = result.violations.iter().map(|v| v.message.clone()).collect::<Vec<_>>().join(", ");
+            return Err(CryptoError::PolicyViolation(msg));
+        }
+    }
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
     write_envelope_and_payload(

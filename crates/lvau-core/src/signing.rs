@@ -290,6 +290,98 @@ pub fn has_signature(in_file: &Path) -> Result<Option<[u8; 32]>, SigningError> {
     Ok(envelope.signature.map(|s| s.signer_fingerprint))
 }
 
+/// Add an approval seal to an existing `.lvau` file.
+///
+/// An approval seal signs the AAD hash (which commits to the envelope header),
+/// indicating approval of the artifact's metadata and structure.
+pub fn add_approval_seal(
+    in_file: &Path,
+    out_file: &Path,
+    signing_key: &SigningKey,
+    comment: Option<String>,
+    force: bool,
+) -> Result<(), SigningError> {
+    if out_file.exists() && !force {
+        return Err(SigningError::OutputExists(out_file.display().to_string()));
+    }
+
+    let data = fs::read(in_file)?;
+    if data.len() < 4 {
+        return Err(SigningError::InvalidEnvelope);
+    }
+
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    if data.len() < 4 + env_len {
+        return Err(SigningError::InvalidEnvelope);
+    }
+
+    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
+    let ciphertext = &data[4 + env_len..];
+
+    // Sign the AAD hash
+    let signature = signing_key.sign(&envelope.aad_hash);
+    let verify_key = signing_key.verifying_key();
+    let fingerprint = key_fingerprint(&verify_key);
+
+    let approval = lvau_protocol::envelope::ApprovalSignature {
+        signer_fingerprint: fingerprint,
+        signature: signature.to_bytes().to_vec(),
+        comment,
+    };
+
+    envelope.approvals.push(approval);
+
+    // Re-serialize the envelope
+    let new_envelope_bytes = postcard::to_allocvec(&envelope)?;
+    let new_env_len = new_envelope_bytes.len() as u32;
+
+    let mut output = Vec::with_capacity(4 + new_envelope_bytes.len() + ciphertext.len());
+    output.extend_from_slice(&new_env_len.to_le_bytes());
+    output.extend_from_slice(&new_envelope_bytes);
+    output.extend_from_slice(ciphertext);
+
+    fs::write(out_file, output)?;
+    Ok(())
+}
+
+/// Verify all approval seals in a file using a given verify key.
+/// Returns true if at least one valid approval from the given key exists.
+pub fn verify_approvals(
+    in_file: &Path,
+    verify_key: &VerifyingKey,
+) -> Result<bool, SigningError> {
+    let data = fs::read(in_file)?;
+    if data.len() < 4 {
+        return Err(SigningError::InvalidEnvelope);
+    }
+
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    if data.len() < 4 + env_len {
+        return Err(SigningError::InvalidEnvelope);
+    }
+
+    let envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
+    let fingerprint = key_fingerprint(verify_key);
+
+    let mut found_valid = false;
+    for approval in &envelope.approvals {
+        if approval.signer_fingerprint == fingerprint {
+            if approval.signature.len() == 64 {
+                let mut sig_bytes = [0u8; 64];
+                sig_bytes.copy_from_slice(&approval.signature);
+                let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                
+                if verify_key.verify(&envelope.aad_hash, &signature).is_ok() {
+                    found_valid = true;
+                }
+            }
+        }
+    }
+
+    Ok(found_valid)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

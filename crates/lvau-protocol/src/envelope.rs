@@ -70,6 +70,28 @@ pub struct EnvelopeSignature {
     pub comment: Option<String>,
 }
 
+/// An approval seal from a third-party, signing the public envelope AAD hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalSignature {
+    pub signer_fingerprint: [u8; 32],
+    pub signature: Vec<u8>,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+/// Release metadata indicating provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReleaseMetadata {
+    #[serde(default)]
+    pub project_name: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub git_commit: Option<String>,
+    #[serde(default)]
+    pub build_timestamp: Option<String>,
+}
+
 /// Entry in a bundle manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundleEntry {
@@ -122,6 +144,16 @@ pub struct Envelope {
     /// Optional user-provided label visible in public inspect output.
     #[serde(default)]
     pub public_label: Option<String>,
+
+    // v0.4.0 additions
+    #[serde(default)]
+    pub approvals: Vec<ApprovalSignature>,
+    #[serde(default)]
+    pub release_metadata: Option<ReleaseMetadata>,
+    #[serde(default)]
+    pub policy_overridden: bool,
+    #[serde(default)]
+    pub recovery_metadata: Option<Vec<u8>>,
 }
 
 impl Envelope {

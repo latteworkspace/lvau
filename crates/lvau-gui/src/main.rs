@@ -294,6 +294,8 @@ impl eframe::App for LvauGuiApp {
                                                 seed_val,
                                                 self.profile.clone(),
                                                 None,
+                                                None,
+                                                false,
                                             )
                                         } else {
                                             decrypt_file_password(in_file, &temp_out, pwd, seed_val, None)
@@ -309,6 +311,8 @@ impl eframe::App for LvauGuiApp {
                                                     &pub_key,
                                                     self.profile.clone(),
                                                     None,
+                                                    None,
+                                                    false,
                                                 )
                                             } else {
                                                 Err(lvau_core::crypto::CryptoError::DecryptionFailed)
