@@ -1785,9 +1785,7 @@ fn run() -> Result<(), CliError> {
                         description: Some("Created by lvau-cli".into()),
                         recipients: Vec::new(),
                     };
-                    group
-                        .save_to_file(&path)
-                        .map_err(CliError::Message)?;
+                    group.save_to_file(&path).map_err(CliError::Message)?;
                     println!("Created empty recipient group at {}", name);
                 }
                 GroupAction::Add { name, pub_key } => {
@@ -1808,9 +1806,7 @@ fn run() -> Result<(), CliError> {
                         key: format,
                     });
 
-                    group
-                        .save_to_file(&path)
-                        .map_err(CliError::Message)?;
+                    group.save_to_file(&path).map_err(CliError::Message)?;
                     println!("Added key {} to group {}", pub_key.display(), name);
                 }
                 GroupAction::Remove { name, fingerprint } => {
@@ -1822,9 +1818,7 @@ fn run() -> Result<(), CliError> {
                     group.recipients.retain(|r| r.name != fingerprint); // Simple match for now
 
                     if group.recipients.len() < initial_len {
-                        group
-                            .save_to_file(&path)
-                            .map_err(CliError::Message)?;
+                        group.save_to_file(&path).map_err(CliError::Message)?;
                         println!("Removed recipient {} from group {}", fingerprint, name);
                     } else {
                         println!("Recipient {} not found in group {}", fingerprint, name);
