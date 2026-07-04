@@ -148,6 +148,8 @@ pub struct Envelope {
     // v0.4.0 additions
     #[serde(default)]
     pub approvals: Vec<ApprovalSignature>,
+
+    // v0.5.0 additions (Release Artifact Mode)
     #[serde(default)]
     pub release_metadata: Option<ReleaseMetadata>,
     #[serde(default)]

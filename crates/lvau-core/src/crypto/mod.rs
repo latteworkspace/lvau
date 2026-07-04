@@ -53,6 +53,11 @@ pub enum CryptoError {
     PolicyViolation(String),
 }
 
+pub enum EncryptCredential {
+    Password(Secret<String>, Option<Secret<String>>),
+    Keypairs(Vec<crate::crypto::keys::HybridPublicKey>),
+}
+
 fn derive_master_key(
     password: &Secret<String>,
     seed: Option<&Secret<String>>,
@@ -303,7 +308,7 @@ pub fn encrypt_file_password(
 
     let aad_hash = compute_aad_hash(&header)?;
 
-    let mut envelope = Envelope {
+    let envelope = Envelope {
         header,
         plaintext_len,
         nonce: nonce_bytes,
@@ -322,7 +327,12 @@ pub fn encrypt_file_password(
     if let Some(pol) = policy {
         let result = crate::policy::lint_envelope(&envelope, pol);
         if !result.is_valid() && !allow_policy_override {
-            let msg = result.violations.iter().map(|v| v.message.clone()).collect::<Vec<_>>().join(", ");
+            let msg = result
+                .violations
+                .iter()
+                .map(|v| v.message.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(CryptoError::PolicyViolation(msg));
         }
     }
@@ -345,10 +355,10 @@ pub fn encrypt_file_password(
     Ok(())
 }
 
-pub fn encrypt_file_keypair(
+pub fn encrypt_file_keypairs(
     in_path: &Path,
     out_path: &Path,
-    recipient_pub: &HybridPublicKey,
+    recipient_pubs: &[HybridPublicKey],
     profile: SecurityProfile,
     progress_callback: Option<&mut dyn FnMut(u64)>,
     policy: Option<&crate::policy::CapsulePolicy>,
@@ -381,27 +391,37 @@ pub fn encrypt_file_keypair(
         secondary_nonce_bytes = Some(sn);
     }
 
-    let ephem_x25519_priv = StaticSecret::random_from_rng(rng);
-    let ephem_x25519_pub = X25519PublicKey::from(&ephem_x25519_priv);
-    let x25519_ss = ephem_x25519_priv.diffie_hellman(&recipient_pub.x25519);
-
-    let (mlkem_ct, mlkem_ss) = recipient_pub.mlkem.encapsulate();
-
-    let mut combined_ss = Vec::new();
-    combined_ss.extend_from_slice(x25519_ss.as_bytes());
-    combined_ss.extend_from_slice(mlkem_ss.as_slice());
-
-    let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
-    let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk
-        .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
-        .map_err(|_| CryptoError::EncryptionFailed)?;
-
     let mut fek = Zeroizing::new([0u8; 32]);
     rng.fill_bytes(&mut *fek);
 
-    let wrap_nonce = [0u8; 24];
-    let encrypted_file_key = wrap_key_xchacha(&*fek, &kwk, &wrap_nonce)?;
+    let mut envelope_recipients = Vec::new();
+
+    for pubkey in recipient_pubs {
+        let ephem_x25519_priv = StaticSecret::random_from_rng(rng);
+        let ephem_x25519_pub = X25519PublicKey::from(&ephem_x25519_priv);
+        let x25519_ss = ephem_x25519_priv.diffie_hellman(&pubkey.x25519);
+
+        let (mlkem_ct, mlkem_ss) = pubkey.mlkem.encapsulate();
+
+        let mut combined_ss = Vec::new();
+        combined_ss.extend_from_slice(x25519_ss.as_bytes());
+        combined_ss.extend_from_slice(mlkem_ss.as_slice());
+
+        let kw_hk = Hkdf::<Sha256>::new(None, &combined_ss);
+        let mut kwk = Zeroizing::new([0u8; 32]);
+        kw_hk
+            .expand(b"Lvau-Hybrid-Wrap", &mut *kwk)
+            .map_err(|_| CryptoError::EncryptionFailed)?;
+
+        let wrap_nonce = [0u8; 24];
+        let encrypted_file_key = wrap_key_xchacha(&*fek, &kwk, &wrap_nonce)?;
+
+        envelope_recipients.push(Recipient::X25519MlkemHybrid {
+            ephemeral_public_x25519: ephem_x25519_pub.to_bytes(),
+            mlkem_ciphertext: mlkem_ct.as_slice().to_vec(),
+            encrypted_file_key,
+        });
+    }
 
     let header = EnvelopeHeader {
         magic: MAGIC_REAL,
@@ -409,16 +429,12 @@ pub fn encrypt_file_keypair(
         profile: profile.clone(),
         algorithm: algorithm.clone(),
         kdf: None,
-        recipients: vec![Recipient::X25519MlkemHybrid {
-            ephemeral_public_x25519: ephem_x25519_pub.to_bytes(),
-            mlkem_ciphertext: mlkem_ct.as_slice().to_vec(),
-            encrypted_file_key,
-        }],
+        recipients: envelope_recipients,
     };
 
     let aad_hash = compute_aad_hash(&header)?;
 
-    let mut envelope = Envelope {
+    let envelope = Envelope {
         header,
         plaintext_len,
         nonce: nonce_bytes,
@@ -437,7 +453,12 @@ pub fn encrypt_file_keypair(
     if let Some(pol) = policy {
         let result = crate::policy::lint_envelope(&envelope, pol);
         if !result.is_valid() && !allow_policy_override {
-            let msg = result.violations.iter().map(|v| v.message.clone()).collect::<Vec<_>>().join(", ");
+            let msg = result
+                .violations
+                .iter()
+                .map(|v| v.message.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(CryptoError::PolicyViolation(msg));
         }
     }

@@ -32,6 +32,8 @@ fn roundtrip_bytes(name: &str, bytes: &[u8]) {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
     decrypt_file_password(&enc, &dec, password, None, None).unwrap();
@@ -84,6 +86,8 @@ fn wrong_password_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -113,6 +117,8 @@ fn modified_ciphertext_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -139,6 +145,8 @@ fn modified_header_aad_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -180,6 +188,8 @@ fn truncated_file_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -222,6 +232,8 @@ fn inspect_works_without_password() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -251,6 +263,8 @@ fn paranoid_profile_with_seed_roundtrips_and_rejects_wrong_seed() {
         Some(seed.clone()),
         SecurityProfile::Paranoid,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -275,7 +289,7 @@ fn hybrid_keypair_roundtrips() {
     let (private_key, public_key) = generate_keypair();
 
     fs::write(&input, b"hybrid recipient data").unwrap();
-    encrypt_file_keypair(&input, &enc, &public_key, SecurityProfile::Fast, None).unwrap();
+    encrypt_file_keypairs(&input, &enc, &vec![public_key], SecurityProfile::Fast, None, None, false).unwrap();
     decrypt_file_keypair(&enc, &dec, &private_key, None).unwrap();
 
     assert_eq!(fs::read(&dec).unwrap(), b"hybrid recipient data");
@@ -295,6 +309,8 @@ fn corrupt_magic_bytes_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -332,6 +348,8 @@ fn corrupt_version_fails() {
         None,
         SecurityProfile::Fast,
         None,
+        None,
+        false,
     )
     .unwrap();
 
@@ -365,7 +383,7 @@ fn wrong_keypair_fails() {
     let (private_key2, _) = generate_keypair();
 
     fs::write(&input, b"hybrid recipient data").unwrap();
-    encrypt_file_keypair(&input, &enc, &public_key1, SecurityProfile::Fast, None).unwrap();
+    encrypt_file_keypairs(&input, &enc, &vec![public_key1], SecurityProfile::Fast, None, None, false).unwrap();
 
     let result = decrypt_file_keypair(&enc, &dec, &private_key2, None);
     assert!(matches!(result, Err(CryptoError::DecryptionFailed)));

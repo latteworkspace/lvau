@@ -187,7 +187,10 @@ impl HybridPublicKey {
             .map_err(|_| CryptoError::Io(std::io::Error::other("IO Error")))?;
         let format: HybridPublicKeyFormat =
             serde_json::from_str(&json).map_err(|_| CryptoError::DecryptionFailed)?;
+        Self::from_format(&format)
+    }
 
+    pub fn from_format(format: &HybridPublicKeyFormat) -> Result<Self, CryptoError> {
         let x25519_bytes = base64::engine::general_purpose::STANDARD
             .decode(&format.x25519_pub)
             .map_err(|_| CryptoError::DecryptionFailed)?;

@@ -4,13 +4,13 @@ use lvau_core::bundle::{
     extract_bundle, inspect_bundle, list_bundle, pack_directory, verify_bundle, PaddingProfile,
 };
 use lvau_core::crypto::{
-    decrypt_file_keypair, decrypt_file_password, encrypt_file_keypair, encrypt_file_password,
+    decrypt_file_keypair, decrypt_file_password, encrypt_file_keypairs, encrypt_file_password,
     keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
     verify_file_keypair, verify_file_password,
 };
 use lvau_core::signing::{
-    generate_signing_keypair, key_fingerprint, load_signing_key, load_verify_key,
-    save_signing_key, save_verify_key, sign_file, verify_signature,
+    generate_signing_keypair, key_fingerprint, load_signing_key, load_verify_key, save_signing_key,
+    save_verify_key, sign_file, verify_signature,
 };
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
@@ -67,6 +67,10 @@ enum Commands {
         /// Use public key encryption.
         #[arg(long)]
         pub_key: Option<PathBuf>,
+
+        /// Use a RecipientGroup TOML file for multi-recipient encryption.
+        #[arg(long)]
+        recipient_group: Option<PathBuf>,
 
         /// Security profile (fast, balanced, archive, paranoid, extreme).
         #[arg(long, default_value = "balanced")]
@@ -188,6 +192,36 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Generate a comprehensive verification report for a capsule.
+    Report {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Verify key (.lvau-verify) to check author signature.
+        #[arg(long)]
+        verify_key: Option<PathBuf>,
+
+        /// Policy file to lint the capsule against.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+
+        /// Use password verification.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Use private key verification.
+        #[arg(long)]
+        priv_key: Option<PathBuf>,
+
+        /// Output in JSON format.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// Manage and lint capsule policies.
     Policy {
         #[command(subcommand)]
@@ -207,6 +241,16 @@ enum Commands {
         /// Replace existing key files.
         #[arg(short, long)]
         force: bool,
+    },
+    /// Manage release artifacts.
+    Release {
+        #[command(subcommand)]
+        action: ReleaseAction,
+    },
+    /// Manage recovery metadata.
+    Recovery {
+        #[command(subcommand)]
+        action: RecoveryAction,
     },
     /// Sign an encrypted .lvau file with an Ed25519 signing key.
     Sign {
@@ -279,6 +323,62 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum ReleaseAction {
+    /// Attach release metadata to a capsule.
+    Attach {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Output .lvau file.
+        #[arg(short, long)]
+        out_file: PathBuf,
+
+        /// Project name (e.g. lvau-core)
+        #[arg(long)]
+        project_name: Option<String>,
+
+        /// Version string (e.g. v0.5.0)
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Git commit hash
+        #[arg(long)]
+        git_commit: Option<String>,
+
+        /// Build timestamp (ISO 8601)
+        #[arg(long)]
+        build_timestamp: Option<String>,
+
+        /// Replace existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RecoveryAction {
+    /// Attach recovery metadata to a capsule.
+    Attach {
+        /// Input .lvau file.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Output .lvau file.
+        #[arg(short, long)]
+        out_file: PathBuf,
+
+        /// Metadata to attach as bytes.
+        #[arg(long)]
+        data: String,
+
+        /// Replace existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum BundleAction {
     /// Pack a directory into a single encrypted .lvau bundle.
     Pack {
@@ -297,6 +397,10 @@ enum BundleAction {
         /// Read the password from a local file instead of prompting.
         #[arg(long)]
         password_file: Option<PathBuf>,
+
+        /// Use a RecipientGroup TOML file for multi-recipient encryption.
+        #[arg(long)]
+        recipient_group: Option<PathBuf>,
 
         /// Security profile.
         #[arg(long, default_value = "balanced")]
@@ -321,7 +425,7 @@ enum BundleAction {
         /// Replace an existing output file.
         #[arg(short, long)]
         force: bool,
-        
+
         /// Check against a local CapsulePolicy TOML file before encrypting.
         #[arg(long)]
         policy: Option<PathBuf>,
@@ -445,10 +549,10 @@ enum PolicyAction {
     Lint {
         #[arg(long)]
         in_file: PathBuf,
-        
+
         #[arg(long)]
         policy: PathBuf,
-        
+
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -456,7 +560,7 @@ enum PolicyAction {
     Create {
         #[arg(long)]
         out_file: PathBuf,
-        
+
         #[arg(short, long)]
         force: bool,
     },
@@ -673,6 +777,8 @@ struct InspectResult {
     public_label: Option<String>,
     signed: bool,
     signer_fingerprint: Option<String>,
+    release_metadata: Option<lvau_protocol::envelope::ReleaseMetadata>,
+    has_recovery_metadata: bool,
 }
 
 #[derive(Serialize)]
@@ -726,6 +832,7 @@ fn run() -> Result<(), CliError> {
             password,
             password_file,
             pub_key,
+            recipient_group,
             profile,
             seed,
             seed_file,
@@ -736,13 +843,21 @@ fn run() -> Result<(), CliError> {
         } => {
             ensure_input_file(&in_file)?;
             ensure_output_available(&out_file, force)?;
-            require_one_mode(
-                password,
-                password_file.as_deref(),
-                pub_key.is_some(),
-                "--password/--password-file",
-                "--pub-key",
-            )?;
+
+            let has_password = password || password_file.is_some();
+            let has_pub = pub_key.is_some() || recipient_group.is_some();
+            if has_password && has_pub {
+                return Err(CliError::Message(format!(
+                    "Cannot use {} and {} together.",
+                    "--password/--password-file", "--pub-key/--recipient-group"
+                )));
+            }
+            if !has_password && !has_pub {
+                return Err(CliError::Message(format!(
+                    "Must provide either {} or {}.",
+                    "--password/--password-file", "--pub-key/--recipient-group"
+                )));
+            }
 
             let sec_profile = parse_profile(&profile)?;
             let temp_out = if sfx {
@@ -759,17 +874,29 @@ fn run() -> Result<(), CliError> {
             let mut progress_callback = |bytes: u64| pb.set_position(bytes);
 
             let pol = match policy {
-                Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
-                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                Some(p) => Some(
+                    lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                        .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?,
+                ),
                 None => None,
             };
 
-            if let Some(pub_path) = pub_key {
-                let pk = HybridPublicKey::load_from_file(&pub_path)?;
-                encrypt_file_keypair(
+            if pub_key.is_some() || recipient_group.is_some() {
+                let mut pubs = Vec::new();
+                if let Some(pub_path) = pub_key {
+                    pubs.push(HybridPublicKey::load_from_file(&pub_path)?);
+                }
+                if let Some(group_path) = recipient_group {
+                    let group = lvau_core::groups::RecipientGroup::load_from_file(&group_path)
+                        .map_err(CliError::Message)?;
+                    let mut group_keys = group.extract_public_keys()?;
+                    pubs.append(&mut group_keys);
+                }
+
+                lvau_core::crypto::encrypt_file_keypairs(
                     &in_file,
                     &temp_out,
-                    &pk,
+                    &pubs,
                     sec_profile,
                     Some(&mut progress_callback),
                     pol.as_ref(),
@@ -865,20 +992,17 @@ fn run() -> Result<(), CliError> {
                     version: header.version,
                     profile: format!("{:?}", header.profile),
                     algorithm: format!("{:?}", header.algorithm),
-                    kdf: match &header.kdf {
-                        Some(KdfParams::Argon2id {
+                    kdf: header.kdf.as_ref().map(|KdfParams::Argon2id {
                             m_cost,
                             t_cost,
                             p_cost,
                             ..
-                        }) => Some(KdfInfo {
+                        }| KdfInfo {
                             algorithm: "Argon2id".to_string(),
                             m_cost: *m_cost,
                             t_cost: *t_cost,
                             p_cost: *p_cost,
                         }),
-                        None => None,
-                    },
                     recipient_count: header.recipients.len(),
                     recipients: header
                         .recipients
@@ -898,6 +1022,8 @@ fn run() -> Result<(), CliError> {
                     public_label: envelope.public_label.clone(),
                     signed: envelope.signature.is_some(),
                     signer_fingerprint: sig_fingerprint.clone(),
+                    release_metadata: envelope.release_metadata.clone(),
+                    has_recovery_metadata: envelope.recovery_metadata.is_some(),
                 };
                 println!(
                     "{}",
@@ -951,6 +1077,25 @@ fn run() -> Result<(), CliError> {
                 } else {
                     println!("Signed:    no");
                 }
+
+                if let Some(rm) = &envelope.release_metadata {
+                    println!("Release Metadata:");
+                    if let Some(proj) = &rm.project_name {
+                        println!("  Project: {}", proj);
+                    }
+                    if let Some(ver) = &rm.version {
+                        println!("  Version: {}", ver);
+                    }
+                    if let Some(git) = &rm.git_commit {
+                        println!("  Commit:  {}", git);
+                    }
+                    if let Some(ts) = &rm.build_timestamp {
+                        println!("  Built:   {}", ts);
+                    }
+                }
+                if envelope.recovery_metadata.is_some() {
+                    println!("Recovery Metadata: Present");
+                }
             }
         }
         Commands::Verify {
@@ -992,23 +1137,30 @@ fn run() -> Result<(), CliError> {
                 println!("Verification successful: {}", in_file.display());
             }
         }
-        Commands::Preflight { in_file, verify_key, policy, json } => {
+        Commands::Preflight {
+            in_file,
+            verify_key,
+            policy,
+            json,
+        } => {
             ensure_input_file(&in_file)?;
-            
+
             let mut vkey = None;
             if let Some(vk_path) = verify_key {
                 let key = lvau_core::signing::load_verify_key(&vk_path)?;
                 vkey = Some(key);
             }
-            
+
             let pol = match policy {
-                Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
-                    .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                Some(p) => Some(
+                    lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                        .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?,
+                ),
                 None => None,
             };
 
             let res = lvau_core::preflight::run_preflight(&in_file, vkey.as_ref(), pol.as_ref());
-            
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&res).unwrap());
             } else {
@@ -1049,7 +1201,7 @@ fn run() -> Result<(), CliError> {
                         }
                     }
                 }
-                
+
                 if !res.errors.is_empty() {
                     println!("\nErrors:");
                     for e in res.errors {
@@ -1074,11 +1226,92 @@ fn run() -> Result<(), CliError> {
                         println!("- [WARN]  {}", w);
                     }
                 }
-                
-                match res.status {
-                    lvau_core::preflight::PreflightStatus::Fail => std::process::exit(1),
-                    _ => {}
+
+                if let lvau_core::preflight::PreflightStatus::Fail = res.status { std::process::exit(1) }
+            }
+        }
+        Commands::Report {
+            in_file,
+            verify_key,
+            policy,
+            password,
+            password_file,
+            priv_key,
+            json,
+        } => {
+            ensure_input_file(&in_file)?;
+            let mut vkey = None;
+            if let Some(vk_path) = verify_key {
+                let key = lvau_core::signing::load_verify_key(&vk_path)?;
+                vkey = Some(key);
+            }
+            let pol = match policy {
+                Some(p) => Some(
+                    lvau_core::policy::CapsulePolicy::load_from_file(&p)
+                        .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?,
+                ),
+                None => None,
+            };
+
+            let mut cred = None;
+            if let Some(pk_path) = priv_key {
+                let pk = HybridPrivateKey::load_from_file(&pk_path)?;
+                cred = Some(lvau_core::report::DecryptCredential::Keypair(pk));
+            } else if password || password_file.is_some() {
+                if let Some(pwd) = password_secret(password, password_file.as_deref(), false)? {
+                    cred = Some(lvau_core::report::DecryptCredential::Password(pwd, None));
                 }
+            }
+
+            let report = lvau_core::report::generate_report(
+                &in_file,
+                vkey.as_ref(),
+                pol.as_ref(),
+                cred.as_ref(),
+            );
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else {
+                println!("==================================================");
+                println!("             Lvau Verification Report             ");
+                println!("==================================================");
+                println!("File: {}", report.file_path);
+                println!("Time: {}", report.timestamp);
+                println!("\n--- Preflight Summary ---");
+                println!("Version: {}", report.preflight.version);
+                println!("Content: {}", report.preflight.content_type);
+                println!("Profile: {}", report.preflight.profile);
+                println!("Valid Signature: {:?}", report.preflight.signature_valid);
+                println!("Policy OK: {:?}", report.preflight.policy_ok);
+
+                println!("\n--- Decryption Check ---");
+                if let Some(ok) = report.decryption_successful {
+                    if ok {
+                        println!("Status: SUCCESS");
+                        if let Some(count) = report.file_count {
+                            println!("Extracted Files: {}", count);
+                        }
+                    } else {
+                        println!("Status: FAILED (Invalid key/password or tampered payload)");
+                    }
+                } else {
+                    println!("Status: SKIPPED (No credentials provided)");
+                }
+
+                if !report.preflight.errors.is_empty() {
+                    println!("\n--- Errors ---");
+                    for err in &report.preflight.errors {
+                        println!("- {}", err);
+                    }
+                }
+                if !report.preflight.warnings.is_empty() {
+                    println!("\n--- Warnings ---");
+                    for warn in &report.preflight.warnings {
+                        println!("- {}", warn);
+                    }
+                }
+                println!("==================================================");
             }
         }
         Commands::Policy { action } => match action {
@@ -1088,11 +1321,16 @@ fn run() -> Result<(), CliError> {
                 println!("Policy File: {}", in_file.display());
                 println!("{}", toml::to_string_pretty(&pol).unwrap());
             }
-            PolicyAction::Lint { in_file, policy, json } => {
+            PolicyAction::Lint {
+                in_file,
+                policy,
+                json,
+            } => {
                 let pol = lvau_core::policy::CapsulePolicy::load_from_file(&policy)
                     .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?;
-                let (header, content_type, public_label) = lvau_core::bundle::inspect_bundle(&in_file)?;
-                
+                let (header, content_type, public_label) =
+                    lvau_core::bundle::inspect_bundle(&in_file)?;
+
                 // Construct a mock envelope for linting
                 let mut envelope = lvau_protocol::envelope::Envelope {
                     header,
@@ -1109,28 +1347,34 @@ fn run() -> Result<(), CliError> {
                     policy_overridden: false,
                     recovery_metadata: None,
                 };
-                
+
                 // Check if signed (a bit hacky since inspect_bundle doesn't return full envelope currently)
                 // Actually inspect_bundle doesn't return signatures. I will parse the raw envelope using bincode/postcard.
                 let data = fs::read(&in_file)?;
                 let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
                 if data.len() >= 4 + env_len {
-                    if let Ok(real_env) = postcard::from_bytes::<lvau_protocol::envelope::Envelope>(&data[4..4+env_len]) {
+                    if let Ok(real_env) = postcard::from_bytes::<lvau_protocol::envelope::Envelope>(
+                        &data[4..4 + env_len],
+                    ) {
                         envelope = real_env;
                     }
                 }
-                
+
                 let result = lvau_core::policy::lint_envelope(&envelope, &pol);
-                
+
                 if json {
-                    let mut json_val = serde_json::json!({
+                    let json_val = serde_json::json!({
                         "valid": result.is_valid(),
                         "violations": result.violations.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>(),
                         "warnings": result.warnings.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>()
                     });
                     println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
                 } else {
-                    println!("Linting artifact {} against {}", in_file.display(), policy.display());
+                    println!(
+                        "Linting artifact {} against {}",
+                        in_file.display(),
+                        policy.display()
+                    );
                     if result.is_valid() {
                         println!("Result: PASS");
                     } else {
@@ -1158,6 +1402,7 @@ fn run() -> Result<(), CliError> {
                 out_file,
                 password,
                 password_file,
+                recipient_group,
                 profile,
                 allow_symlinks,
                 metadata_profile: _,
@@ -1175,21 +1420,48 @@ fn run() -> Result<(), CliError> {
                 }
                 ensure_output_available(&out_file, force)?;
 
-                let pwd = password_secret(password, password_file.as_deref(), true)?
-                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                let has_password = password || password_file.is_some();
+                let has_pub = recipient_group.is_some();
+                if has_password && has_pub {
+                    return Err(CliError::Message(format!(
+                        "Cannot use {} and {} together.",
+                        "--password/--password-file", "--recipient-group"
+                    )));
+                }
+                if !has_password && !has_pub {
+                    return Err(CliError::Message(format!(
+                        "Must provide either {} or {}.",
+                        "--password/--password-file", "--recipient-group"
+                    )));
+                }
+
+                let credential = if let Some(group_path) = recipient_group {
+                    let group = lvau_core::groups::RecipientGroup::load_from_file(&group_path)
+                        .map_err(CliError::Message)?;
+                    let group_keys = group.extract_public_keys()?;
+                    lvau_core::crypto::EncryptCredential::Keypairs(group_keys)
+                } else {
+                    let pwd = password_secret(password, password_file.as_deref(), true)?
+                        .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                    lvau_core::crypto::EncryptCredential::Password(pwd, None)
+                };
+
                 let sec_profile = parse_profile(&profile)?;
                 let padding = parse_padding(&pad)?;
 
                 let pol = match policy {
-                    Some(p) => Some(lvau_core::policy::CapsulePolicy::load_from_file(&p)
-                        .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?),
+                    Some(p) => Some(
+                        lvau_core::policy::CapsulePolicy::load_from_file(&p).map_err(|e| {
+                            CliError::Message(format!("Failed to load policy: {e}"))
+                        })?,
+                    ),
                     None => None,
                 };
 
                 let manifest = pack_directory(
                     &in_dir,
                     &out_file,
-                    pwd,
+                    credential,
                     sec_profile,
                     allow_symlinks,
                     &padding,
@@ -1376,6 +1648,52 @@ fn run() -> Result<(), CliError> {
                     .ok_or_else(|| CliError::Message("Missing password".into()))?;
                 let manifest = verify_bundle(&in_file, pwd)?;
                 println!("Bundle verified: {} files", manifest.entries.len());
+            }
+        },
+        Commands::Release { action } => match action {
+            ReleaseAction::Attach {
+                in_file,
+                out_file,
+                project_name,
+                version,
+                git_commit,
+                build_timestamp,
+                force,
+            } => {
+                ensure_input_file(&in_file)?;
+                ensure_output_available(&out_file, force)?;
+
+                lvau_core::release::attach_release_metadata(
+                    &in_file,
+                    &out_file,
+                    project_name,
+                    version,
+                    git_commit,
+                    build_timestamp,
+                )
+                .map_err(|e| {
+                    CliError::Message(format!("Failed to attach release metadata: {e}"))
+                })?;
+
+                println!("Attached release metadata to {}", out_file.display());
+            }
+        },
+        Commands::Recovery { action } => match action {
+            RecoveryAction::Attach {
+                in_file,
+                out_file,
+                data,
+                force,
+            } => {
+                ensure_input_file(&in_file)?;
+                ensure_output_available(&out_file, force)?;
+
+                let bytes = data.into_bytes();
+                lvau_core::release::attach_recovery_metadata(&in_file, &out_file, bytes).map_err(
+                    |e| CliError::Message(format!("Failed to attach recovery metadata: {e}")),
+                )?;
+
+                println!("Attached recovery metadata to {}", out_file.display());
             }
         },
         Commands::SignKeygen { out_base, force } => {
@@ -1706,7 +2024,16 @@ fn run_self_test() -> Result<(), CliError> {
 
             let (priv_key, pub_key) = generate_keypair();
 
-            encrypt_file_keypair(&in_path, &enc_path, &pub_key, SecurityProfile::Fast, None, None, false)?;
+            let pubs = vec![pub_key];
+            encrypt_file_keypairs(
+                &in_path,
+                &enc_path,
+                &pubs,
+                SecurityProfile::Fast,
+                None,
+                None,
+                false,
+            )?;
             decrypt_file_keypair(&enc_path, &dec_path, &priv_key, None)?;
 
             let dec_data = fs::read(&dec_path)?;

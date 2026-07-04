@@ -1,8 +1,8 @@
 # Lvau
 
-> Boring, inspectable file encryption for Rust apps and power users.
+> Signed, policy-checked, recoverable encrypted capsules for local files and developer workflows.
 
-Lvau is a Rust-based local file encryption toolkit. It uses standard cryptographic primitives, safe defaults, and a versioned `.lvau` envelope that can be inspected without decrypting the payload.
+Lvau is a Rust-based encrypted capsule toolkit. A Lvau capsule is not just an encrypted file; it can contain an encrypted payload, encrypted private manifest, minimal public metadata, author signature, recipient slots, recovery policy, artifact policy, verification status, and release metadata.
 
 English | [Japanese](README_ja.md)
 
@@ -29,12 +29,12 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 
 Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool excels at a specific use case. Lvau focuses on a different combination:
 
-1. **Inspectable envelope** — Every `.lvau` file has a public header you can read without the password. You can verify the format version, algorithm, KDF parameters, and recipient type before you decrypt.
-2. **Sealed bundles** — Pack an entire directory into a single encrypted `.lvau` file with an authenticated private manifest. Metadata privacy is configurable.
-3. **Signed provenance** — Optionally sign encrypted artifacts with Ed25519. Verify authorship without knowing the decryption password.
-4. **CLI-first automation** — Every feature works from scripts, CI pipelines, and cron jobs. `--password-file`, `--json` output, and `--dry-run` modes are first-class.
-5. **Safe defaults** — Refuses overwrite without `--force`. Rejects path traversal on extraction. Atomic writes via temp+rename. Zeroized key material.
-6. **Boring cryptography** — XChaCha20-Poly1305 AEAD, Argon2id KDF, HKDF-SHA256. No custom ciphers as security boundaries.
+1. **Capsule architecture** — A Lvau capsule is an `.lvau` envelope that can hold an encrypted payload, an encrypted private manifest, public release metadata, and an author signature.
+2. **Capsule policy** — Check capsules against TOML policy files. Enforce required algorithms, KDF costs, or signatures before encrypting or verifying.
+3. **Recipient groups** — Encrypt for multiple recipients using TOML-based recipient group definitions.
+4. **Approval seals** — Add Ed25519 approval signatures to capsules without altering the payload or needing the decryption password.
+5. **Inspectable & Diffable** — Read the public envelope header without the password. Generate metadata reports or diff the structure of two capsules without exposing file contents.
+6. **Boring cryptography** — XChaCha20-Poly1305 AEAD, Argon2id KDF, HKDF-SHA256. No custom ciphers as security boundaries. Honest positioning.
 
 ### Comparison
 
@@ -45,11 +45,11 @@ Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool ex
 | Disk/container encryption | — | — | ✅ | — | — |
 | Cloud vault sync | — | — | — | ✅ | — |
 | Structured secrets (JSON/YAML) | planned | — | — | — | ✅ |
-| Inspectable envelope | ✅ | — | — | — | — |
-| Signed artifacts | ✅ | — | — | — | ✅ |
+| Capsule policy / linting | ✅ | — | — | — | — |
+| Recipient groups | ✅ | — | — | — | — |
+| Signed artifacts & Approvals | ✅ | — | — | — | ✅ |
 | CLI automation | ✅ | ✅ | limited | — | ✅ |
 | GUI | ✅ | — | ✅ | ✅ | — |
-| Post-quantum hybrid (experimental) | ✅ | — | — | — | — |
 | Formally audited | **no** | **yes** | **yes** | **yes** | varies |
 | Rust implementation | ✅ | ✅ (Go) | C++ | Java | Go |
 
@@ -58,7 +58,7 @@ Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool ex
 - **VeraCrypt** is excellent for full-disk and container encryption.
 - **Cryptomator** is excellent for transparent cloud-synced vaults.
 - **SOPS** is excellent for structured secret management in GitOps workflows.
-- **Lvau** focuses on inspectable envelopes, signed encrypted artifacts, sealed directory bundles, recovery workflows, and CLI-first local developer workflows.
+- **Lvau** is an encrypted capsule toolkit for local developer workflows. It is designed when you need signed, policy-checked, recoverable encrypted artifacts.
 
 ## Features
 
@@ -266,7 +266,7 @@ The `.lvau` format is not stable before v1.0. See [docs/FORMAT.md](docs/FORMAT.m
 | Version | Theme | Key Features |
 | --- | --- | --- |
 | **v0.3.0** | Inspectable, signed, sealed | Bundle mode, Ed25519 signatures, hardened tests, docs overhaul |
-| **v0.4.0** | Recovery and multi-recipient | Shamir recovery shares, rekey/recipient slots, structured secrets |
+| **v0.4.0** | Policy-checked capsules | Capsule policy, preflight checks, approval seals, diffs, groups, metadata |
 | **v1.0** | Stable format | Format freeze, formal audit goal, stable API |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for details.

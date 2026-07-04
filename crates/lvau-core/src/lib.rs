@@ -1,6 +1,9 @@
 pub mod bundle;
 pub mod crypto;
 pub mod diff;
+pub mod groups;
 pub mod policy;
 pub mod preflight;
+pub mod release;
+pub mod report;
 pub mod signing;

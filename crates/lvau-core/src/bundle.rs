@@ -6,8 +6,7 @@
 //! are exposed in the public envelope.
 
 use crate::crypto::{
-    decrypt_file_password, encrypt_file_password, verify_file_password,
-    CryptoError,
+    decrypt_file_password, verify_file_password, CryptoError,
 };
 use lvau_protocol::envelope::{BundleEntry, BundleManifest, ContentType, EnvelopeHeader};
 use secrecy::Secret;
@@ -164,7 +163,7 @@ fn collect_files(
 pub fn pack_directory(
     in_dir: &Path,
     out_file: &Path,
-    password: Secret<String>,
+    credential: crate::crypto::EncryptCredential,
     profile: lvau_protocol::envelope::SecurityProfile,
     allow_symlinks: bool,
     padding: &PaddingProfile,
@@ -239,7 +238,29 @@ pub fn pack_directory(
 
     fs::write(&temp_plain, &bundle_payload).map_err(BundleError::Io)?;
 
-    let result = encrypt_file_password(&temp_plain, out_file, password, None, profile, None, policy, allow_policy_override);
+    let result = match credential {
+        crate::crypto::EncryptCredential::Password(password, seed) => {
+            crate::crypto::encrypt_file_password(
+                &temp_plain,
+                out_file,
+                password,
+                seed,
+                profile,
+                None,
+                policy,
+                allow_policy_override,
+            )
+        }
+        crate::crypto::EncryptCredential::Keypairs(pubs) => crate::crypto::encrypt_file_keypairs(
+            &temp_plain,
+            out_file,
+            &pubs,
+            profile,
+            None,
+            policy,
+            allow_policy_override,
+        ),
+    };
 
     // Always clean up temp file
     let _ = fs::remove_file(&temp_plain);
@@ -545,10 +566,12 @@ mod tests {
         let manifest = pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -584,10 +607,12 @@ mod tests {
         pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -619,10 +644,12 @@ mod tests {
         pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -651,10 +678,12 @@ mod tests {
         pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -680,10 +709,12 @@ mod tests {
         pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -715,10 +746,12 @@ mod tests {
         pack_directory(
             &in_dir,
             &out_file,
-            test_password(),
+            crate::crypto::EncryptCredential::Password(test_password(), None),
             SecurityProfile::Fast,
             false,
             &PaddingProfile::None,
+            false,
+            None,
             false,
         )
         .unwrap();

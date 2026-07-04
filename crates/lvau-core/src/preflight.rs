@@ -1,7 +1,7 @@
-use crate::policy::{lint_envelope, CapsulePolicy, PolicyResult};
-use crate::signing::{verify_signature, SigningError};
+use crate::policy::{lint_envelope, CapsulePolicy};
+use crate::signing::verify_signature;
 use ed25519_dalek::VerifyingKey;
-use lvau_protocol::envelope::{ContentType, Envelope, SecurityProfile, AlgorithmId};
+use lvau_protocol::envelope::{AlgorithmId, ContentType, Envelope, SecurityProfile};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -22,25 +22,25 @@ pub struct PreflightResult {
     pub content_type: String,
     pub profile: String,
     pub algorithm: String,
-    
+
     pub public_hash_ok: bool,
     pub signature_present: bool,
     pub signature_valid: Option<bool>,
     pub signer_fingerprint: Option<String>,
-    
+
     pub policy_ok: Option<bool>,
     pub policy_violations: Vec<String>,
     pub policy_warnings: Vec<String>,
     pub policy_overridden: bool,
-    
+
     pub approvals: Vec<String>,
-    
+
     pub recipient_count: usize,
     pub has_recovery_metadata: bool,
     pub has_release_metadata: bool,
-    
+
     pub experimental_flags: Vec<String>,
-    
+
     pub file_size_ok: bool,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
@@ -88,17 +88,19 @@ pub fn run_preflight(
 
     if data.len() < 4 {
         res.status = PreflightStatus::Fail;
-        res.errors.push("File is too small to contain an envelope length".into());
+        res.errors
+            .push("File is too small to contain an envelope length".into());
         return res;
     }
 
     let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
     if data.len() < 4 + env_len {
         res.status = PreflightStatus::Fail;
-        res.errors.push("File is truncated (envelope length exceeds file size)".into());
+        res.errors
+            .push("File is truncated (envelope length exceeds file size)".into());
         return res;
     }
-    
+
     res.file_size_ok = true;
 
     let envelope_bytes = &data[4..4 + env_len];
@@ -124,9 +126,13 @@ pub fn run_preflight(
     res.has_recovery_metadata = envelope.recovery_metadata.is_some();
     res.has_release_metadata = envelope.release_metadata.is_some();
     res.policy_overridden = envelope.policy_overridden;
-    
+
     for approval in &envelope.approvals {
-        let fp = approval.signer_fingerprint.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let fp = approval
+            .signer_fingerprint
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         res.approvals.push(fp);
     }
 
@@ -140,12 +146,15 @@ pub fn run_preflight(
         Ok(_) => res.public_hash_ok = true,
         Err(_) => {
             res.public_hash_ok = false;
-            res.errors.push("Public envelope header hash mismatch (tampered)".into());
+            res.errors
+                .push("Public envelope header hash mismatch (tampered)".into());
         }
     }
 
     // Experimental features
-    if envelope.header.profile == SecurityProfile::Extreme || envelope.header.profile == SecurityProfile::Paranoid {
+    if envelope.header.profile == SecurityProfile::Extreme
+        || envelope.header.profile == SecurityProfile::Paranoid
+    {
         res.experimental_flags.push("Cascade Cipher".into());
     }
     if envelope.header.algorithm == AlgorithmId::TripleCascadeAesXChaChaLco {
@@ -155,8 +164,13 @@ pub fn run_preflight(
     // Signature
     if let Some(sig) = &envelope.signature {
         res.signature_present = true;
-        res.signer_fingerprint = Some(sig.signer_fingerprint.iter().map(|b| format!("{:02x}", b)).collect());
-        
+        res.signer_fingerprint = Some(
+            sig.signer_fingerprint
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect(),
+        );
+
         if let Some(key) = verify_key {
             match verify_signature(in_file, key) {
                 Ok(_) => res.signature_valid = Some(true),
@@ -174,17 +188,19 @@ pub fn run_preflight(
     if let Some(pol) = policy {
         let policy_res = lint_envelope(&envelope, pol);
         res.policy_ok = Some(policy_res.is_valid());
-        
+
         for v in policy_res.violations {
             res.policy_violations.push(v.message);
         }
         for w in policy_res.warnings {
             res.policy_warnings.push(w.message);
         }
-        
+
         if res.policy_ok == Some(false) {
             if envelope.policy_overridden {
-                res.warnings.push("Artifact violates policy but was explicitly overridden by author".into());
+                res.warnings.push(
+                    "Artifact violates policy but was explicitly overridden by author".into(),
+                );
             } else {
                 res.errors.push("Artifact violates local policy".into());
             }
@@ -194,7 +210,10 @@ pub fn run_preflight(
     // Compute Status
     if !res.errors.is_empty() {
         res.status = PreflightStatus::Fail;
-    } else if !res.warnings.is_empty() || !res.policy_warnings.is_empty() || !res.experimental_flags.is_empty() {
+    } else if !res.warnings.is_empty()
+        || !res.policy_warnings.is_empty()
+        || !res.experimental_flags.is_empty()
+    {
         res.status = PreflightStatus::Warn;
     } else {
         res.status = PreflightStatus::Ok;

@@ -346,10 +346,7 @@ pub fn add_approval_seal(
 
 /// Verify all approval seals in a file using a given verify key.
 /// Returns true if at least one valid approval from the given key exists.
-pub fn verify_approvals(
-    in_file: &Path,
-    verify_key: &VerifyingKey,
-) -> Result<bool, SigningError> {
+pub fn verify_approvals(in_file: &Path, verify_key: &VerifyingKey) -> Result<bool, SigningError> {
     let data = fs::read(in_file)?;
     if data.len() < 4 {
         return Err(SigningError::InvalidEnvelope);
@@ -365,22 +362,20 @@ pub fn verify_approvals(
 
     let mut found_valid = false;
     for approval in &envelope.approvals {
-        if approval.signer_fingerprint == fingerprint {
-            if approval.signature.len() == 64 {
+        if approval.signer_fingerprint == fingerprint
+            && approval.signature.len() == 64 {
                 let mut sig_bytes = [0u8; 64];
                 sig_bytes.copy_from_slice(&approval.signature);
                 let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                
+
                 if verify_key.verify(&envelope.aad_hash, &signature).is_ok() {
                     found_valid = true;
                 }
             }
-        }
     }
 
     Ok(found_valid)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -406,6 +401,8 @@ mod tests {
             None,
             SecurityProfile::Fast,
             None,
+            None,
+            false,
         )
         .unwrap();
 
@@ -433,6 +430,8 @@ mod tests {
             None,
             SecurityProfile::Fast,
             None,
+            None,
+            false,
         )
         .unwrap();
 
@@ -466,6 +465,8 @@ mod tests {
             None,
             SecurityProfile::Fast,
             None,
+            None,
+            false,
         )
         .unwrap();
 
@@ -493,6 +494,8 @@ mod tests {
             None,
             SecurityProfile::Fast,
             None,
+            None,
+            false,
         )
         .unwrap();
 
@@ -538,6 +541,8 @@ mod tests {
             None,
             SecurityProfile::Fast,
             None,
+            None,
+            false,
         )
         .unwrap();
 

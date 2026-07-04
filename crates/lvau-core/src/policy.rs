@@ -81,7 +81,7 @@ impl CapsulePolicy {
         let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
         toml::from_str(&content).map_err(|e| e.to_string())
     }
-    
+
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         let content = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::write(path, content).map_err(|e| e.to_string())
@@ -106,6 +106,12 @@ pub struct PolicyResult {
     pub warnings: Vec<PolicyWarning>,
 }
 
+impl Default for PolicyResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PolicyResult {
     pub fn new() -> Self {
         Self {
@@ -113,7 +119,7 @@ impl PolicyResult {
             warnings: Vec::new(),
         }
     }
-    
+
     pub fn is_valid(&self) -> bool {
         self.violations.is_empty()
     }
@@ -141,11 +147,17 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
 
     // 3. Min KDF Profile
     if let Some(ref min_kdf) = policy.min_kdf_profile {
-        if let Some(KdfParams::Argon2id { m_cost, t_cost, p_cost, .. }) = &envelope.header.kdf {
+        if let Some(KdfParams::Argon2id {
+            m_cost,
+            t_cost,
+            p_cost,
+            ..
+        }) = &envelope.header.kdf
+        {
             let is_interactive = *m_cost >= 65536 && *t_cost >= 2 && *p_cost >= 1;
             let is_moderate = *m_cost >= 262144 && *t_cost >= 3 && *p_cost >= 2;
             let is_strong = *m_cost >= 1048576 && *t_cost >= 4 && *p_cost >= 4;
-            
+
             let actual_profile = if is_strong {
                 MinKdfProfile::Strong
             } else if is_moderate {
@@ -163,7 +175,10 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
             if fails {
                 result.violations.push(PolicyViolation {
                     rule: "min_kdf_profile".into(),
-                    message: format!("Policy requires KDF profile {:?}, but the artifact's KDF is weaker.", min_kdf),
+                    message: format!(
+                        "Policy requires KDF profile {:?}, but the artifact's KDF is weaker.",
+                        min_kdf
+                    ),
                 });
             }
         }
@@ -180,8 +195,10 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
             AlgorithmId::X25519MlkemHybrid => "X25519MlkemHybrid",
             AlgorithmId::Ed25519MldsaHybrid => "Ed25519MldsaHybrid",
         };
-        
-        let allowed = allowed_ciphers.iter().any(|c| c.eq_ignore_ascii_case(alg_str));
+
+        let allowed = allowed_ciphers
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(alg_str));
         if !allowed {
             result.violations.push(PolicyViolation {
                 rule: "allowed_ciphers".into(),
@@ -196,7 +213,7 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
             Some(KdfParams::Argon2id { .. }) => "Argon2id",
             None => "None",
         };
-        
+
         let allowed = allowed_kdfs.iter().any(|k| k.eq_ignore_ascii_case(kdf_str));
         if !allowed {
             result.violations.push(PolicyViolation {
@@ -215,14 +232,15 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     }
 
     // 7. Allow Experimental
-    if !policy.allow_experimental {
-        if envelope.header.profile == SecurityProfile::Extreme || envelope.header.profile == SecurityProfile::Paranoid {
+    if !policy.allow_experimental
+        && (envelope.header.profile == SecurityProfile::Extreme
+            || envelope.header.profile == SecurityProfile::Paranoid)
+        {
             result.violations.push(PolicyViolation {
                 rule: "allow_experimental".into(),
                 message: "Experimental profiles (Cascade/LCO) are disallowed by policy.".into(),
             });
         }
-    }
 
     // 8. Public label allowed
     if !policy.public_label_allowed && envelope.public_label.is_some() {
@@ -233,22 +251,31 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     }
 
     // 9. Created by required
-    if policy.created_by_required {
-        if envelope.release_metadata.is_none() || envelope.release_metadata.as_ref().unwrap().project_name.is_none() {
+    if policy.created_by_required
+        && (envelope.release_metadata.is_none()
+            || envelope
+                .release_metadata
+                .as_ref()
+                .unwrap()
+                .project_name
+                .is_none())
+        {
             // "created_by" is effectively project_name or similar. We check release_metadata.
             result.violations.push(PolicyViolation {
                 rule: "created_by_required".into(),
                 message: "Policy requires author/project metadata, but none was found.".into(),
             });
         }
-    }
 
     // 10. Recipient count
     let count = envelope.header.recipients.len() as u32;
     if count < policy.require_recipient_count_min {
         result.violations.push(PolicyViolation {
             rule: "require_recipient_count_min".into(),
-            message: format!("Policy requires at least {} recipients, but found {}.", policy.require_recipient_count_min, count),
+            message: format!(
+                "Policy requires at least {} recipients, but found {}.",
+                policy.require_recipient_count_min, count
+            ),
         });
     }
 
@@ -257,7 +284,10 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     if approvals_count < policy.require_approval_signatures_min {
         result.violations.push(PolicyViolation {
             rule: "require_approval_signatures_min".into(),
-            message: format!("Policy requires at least {} approvals, but found {}.", policy.require_approval_signatures_min, approvals_count),
+            message: format!(
+                "Policy requires at least {} approvals, but found {}.",
+                policy.require_approval_signatures_min, approvals_count
+            ),
         });
     }
 

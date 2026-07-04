@@ -3,7 +3,7 @@
 use eframe::egui;
 use log::{LevelFilter, Log, Metadata, Record};
 use lvau_core::crypto::{
-    decrypt_file_keypair, decrypt_file_password, encrypt_file_keypair, encrypt_file_password,
+    decrypt_file_keypair, decrypt_file_password, encrypt_file_keypairs, encrypt_file_password,
     inspect_envelope,
     keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
 };
@@ -305,10 +305,11 @@ impl eframe::App for LvauGuiApp {
                                         let kp = self.keyfile_path.as_ref().unwrap();
                                         if self.mode == OperationMode::Encrypt {
                                             if let Ok(pub_key) = HybridPublicKey::load_from_file(kp) {
-                                                encrypt_file_keypair(
+                                                let pubs = vec![pub_key];
+                                                encrypt_file_keypairs(
                                                     in_file,
                                                     &temp_out,
-                                                    &pub_key,
+                                                    &pubs,
                                                     self.profile.clone(),
                                                     None,
                                                     None,

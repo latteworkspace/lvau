@@ -4,7 +4,7 @@ This document describes what Lvau protects against, what it does not, and the as
 
 ## What Lvau is
 
-Lvau is a **local file encryption toolkit**. It encrypts individual files on your machine using a password (or keypair) and writes a versioned `.lvau` envelope to disk.
+Lvau is a **local encrypted capsule toolkit**. It encrypts individual files or entire directories into a `.lvau` envelope (capsule) using a password or keypair.
 
 ## What Lvau protects
 
@@ -33,6 +33,10 @@ When an `.lvau` file is signed with Ed25519, the signature covers the public env
 - **No decryption required**: Verification works without knowing the decryption password or private key.
 
 > **Important**: Ed25519 signatures and AEAD authentication serve different purposes. AEAD authentication (Poly1305) proves that the ciphertext was not modified *since encryption*. Ed25519 signatures prove *who created* the artifact. AEAD alone does not prove authorship.
+
+### Capsule Policy Enforcement (Optional)
+
+When a `.lvau` file is created or verified with a `CapsulePolicy`, Lvau enforces rules such as required cryptographic algorithms, KDF memory costs, and mandatory signatures. This helps organizations ensure all their encrypted capsules meet minimum security standards before they are trusted.
 
 ## What Lvau does NOT protect
 
@@ -140,9 +144,9 @@ These are widely-used, community-reviewed crates. Lvau does not implement any cr
 
 ### Lost password
 
-If you lose your password, **your data is unrecoverable**. There is no master key, no recovery mechanism, and no backdoor. This is by design.
+If you lose your password, **your data is unrecoverable**. There is no master key, no built-in backdoor. This is by design.
 
-(Recovery shares for keypair encryption are planned for v0.4.0. See [ROADMAP.md](ROADMAP.md).)
+(Lvau capsules have a `recovery_metadata` slot where third-party offline recovery keys or Shamir shares can be attached, but Lvau itself does not implement a built-in recovery backdoor).
 
 ### Corrupted files
 
