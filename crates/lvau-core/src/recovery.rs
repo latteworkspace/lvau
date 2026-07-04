@@ -1,9 +1,9 @@
-use sharks::{Share as SharksShare, Sharks};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::fs::{self, File};
-use sha2::{Digest, Sha256};
 use crate::crypto::CryptoError;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sharks::{Share as SharksShare, Sharks};
+use std::fs;
+use std::path::Path;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RecoveryShare {
@@ -32,7 +32,11 @@ impl RecoveryShare {
     }
 }
 
-pub fn split_secret(secret: &[u8], num_shares: u8, threshold: u8) -> Result<Vec<RecoveryShare>, CryptoError> {
+pub fn split_secret(
+    secret: &[u8],
+    num_shares: u8,
+    threshold: u8,
+) -> Result<Vec<RecoveryShare>, CryptoError> {
     if threshold == 0 || num_shares == 0 || threshold > num_shares {
         return Err(CryptoError::Validation("Invalid threshold or share count"));
     }
@@ -48,9 +52,9 @@ pub fn split_secret(secret: &[u8], num_shares: u8, threshold: u8) -> Result<Vec<
     let mut result = Vec::new();
     for share in dealer.take(num_shares as usize) {
         let share_bytes = Vec::from(&share);
-        
+
         let index = share_bytes[0];
-        
+
         result.push(RecoveryShare {
             magic: *b"LVAU",
             version: 1,
@@ -73,17 +77,21 @@ pub fn combine_shares(shares: &[RecoveryShare]) -> Result<Vec<u8>, CryptoError> 
     let fingerprint = shares[0].fingerprint;
 
     if shares.len() < threshold as usize {
-        return Err(CryptoError::Validation("Not enough shares to reach threshold"));
+        return Err(CryptoError::Validation(
+            "Not enough shares to reach threshold",
+        ));
     }
 
     for s in shares {
         if s.threshold != threshold || s.fingerprint != fingerprint {
-            return Err(CryptoError::Validation("Mismatched shares (different thresholds or fingerprints)"));
+            return Err(CryptoError::Validation(
+                "Mismatched shares (different thresholds or fingerprints)",
+            ));
         }
     }
 
     let sharks = Sharks(threshold);
-    
+
     let mut sharks_shares = Vec::new();
     for s in shares {
         let sharks_share = SharksShare::try_from(s.share_data.as_slice())
@@ -91,6 +99,7 @@ pub fn combine_shares(shares: &[RecoveryShare]) -> Result<Vec<u8>, CryptoError> 
         sharks_shares.push(sharks_share);
     }
 
-    sharks.recover(&sharks_shares)
+    sharks
+        .recover(&sharks_shares)
         .map_err(|_| CryptoError::DecryptionFailed)
 }

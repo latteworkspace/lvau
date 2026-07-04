@@ -4,7 +4,7 @@ pub mod diff;
 pub mod groups;
 pub mod policy;
 pub mod preflight;
+pub mod recovery;
 pub mod release;
 pub mod report;
 pub mod signing;
-pub mod recovery;

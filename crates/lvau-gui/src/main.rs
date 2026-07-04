@@ -238,7 +238,6 @@ impl eframe::App for LvauGuiApp {
                     if self.mode == OperationMode::Inspect {
                         let verify_path = in_file.with_extension("lvau-verify");
                         let v_key = if verify_path.exists() { lvau_core::signing::load_verify_key(&verify_path).ok() } else { None };
-                        
                         let pol_path = std::path::Path::new(".lvau-policy.toml");
                         let p_key = if pol_path.exists() { lvau_core::policy::CapsulePolicy::load_from_file(pol_path).ok() } else { None };
 
@@ -248,7 +247,6 @@ impl eframe::App for LvauGuiApp {
                                 "Version: {}\nProfile: {}\nAlgorithm: {}\nContent-Type: {}\n",
                                 res.version, res.profile, res.algorithm, res.content_type
                             );
-                            
                             details.push_str(&format!("Signed: {}\n", res.signature_present));
                             if let Some(true) = res.signature_valid {
                                 let fp = res.signer_fingerprint.as_deref().unwrap_or("Unknown");
@@ -258,14 +256,12 @@ impl eframe::App for LvauGuiApp {
                             } else if res.signature_present {
                                 details.push_str("Signature Valid: Unchecked (No .lvau-verify found)\n");
                             }
-                            
                             if p_key.is_some() {
                                 details.push_str(&format!("\nPolicy Checked (.lvau-policy.toml): {}\n", res.policy_ok.unwrap_or(false)));
                                 for v in res.policy_violations {
                                     details.push_str(&format!("  Violation: {}\n", v));
                                 }
                             }
-                            
                             self.status = format!("Inspect Successful:\n{}", details);
                         } else {
                             self.status = format!("Error inspecting file: {:?}", res.parse_error);
