@@ -280,3 +280,93 @@ fn hybrid_keypair_roundtrips() {
 
     assert_eq!(fs::read(&dec).unwrap(), b"hybrid recipient data");
 }
+
+#[test]
+fn corrupt_magic_bytes_fails() {
+    let input = unique_path("magic.input");
+    let enc = unique_path("magic.lvau");
+    let dec = unique_path("magic.output");
+
+    fs::write(&input, b"magic data").unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        Secret::new("password".to_string()),
+        None,
+        SecurityProfile::Fast,
+        None,
+    )
+    .unwrap();
+
+    // Corrupt magic bytes
+    let data = fs::read(&enc).unwrap();
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    if data.len() >= 4 + env_len {
+        let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
+        envelope.header.magic = *b"EVIL";
+        let new_env = postcard::to_allocvec(&envelope).unwrap();
+        let new_len = new_env.len() as u32;
+
+        let mut new_data = Vec::new();
+        new_data.extend_from_slice(&new_len.to_le_bytes());
+        new_data.extend_from_slice(&new_env);
+        new_data.extend_from_slice(&data[4 + env_len..]);
+        fs::write(&enc, new_data).unwrap();
+    }
+
+    let result = decrypt_file_password(&enc, &dec, Secret::new("password".to_string()), None, None);
+    assert!(matches!(result, Err(CryptoError::Validation(_))));
+}
+
+#[test]
+fn corrupt_version_fails() {
+    let input = unique_path("version.input");
+    let enc = unique_path("version.lvau");
+    let dec = unique_path("version.output");
+
+    fs::write(&input, b"version data").unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        Secret::new("password".to_string()),
+        None,
+        SecurityProfile::Fast,
+        None,
+    )
+    .unwrap();
+
+    // Corrupt version
+    let data = fs::read(&enc).unwrap();
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    if data.len() >= 4 + env_len {
+        let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
+        envelope.header.version = 999;
+        let new_env = postcard::to_allocvec(&envelope).unwrap();
+        let new_len = new_env.len() as u32;
+
+        let mut new_data = Vec::new();
+        new_data.extend_from_slice(&new_len.to_le_bytes());
+        new_data.extend_from_slice(&new_env);
+        new_data.extend_from_slice(&data[4 + env_len..]);
+        fs::write(&enc, new_data).unwrap();
+    }
+
+    let result = decrypt_file_password(&enc, &dec, Secret::new("password".to_string()), None, None);
+    assert!(matches!(result, Err(CryptoError::Validation(_))));
+}
+
+#[test]
+fn wrong_keypair_fails() {
+    let input = unique_path("wrong_keypair.input");
+    let enc = unique_path("wrong_keypair.lvau");
+    let dec = unique_path("wrong_keypair.output");
+
+    let (_, public_key1) = generate_keypair();
+    let (private_key2, _) = generate_keypair();
+
+    fs::write(&input, b"hybrid recipient data").unwrap();
+    encrypt_file_keypair(&input, &enc, &public_key1, SecurityProfile::Fast, None).unwrap();
+
+    let result = decrypt_file_keypair(&enc, &dec, &private_key2, None);
+    assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
+}

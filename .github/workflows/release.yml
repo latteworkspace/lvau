@@ -100,6 +100,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: docs/V0_2_0_RELEASE_NOTES.md
+          body_path: docs/V0_3_0_RELEASE_NOTES.md
           files: |
             artifacts/*

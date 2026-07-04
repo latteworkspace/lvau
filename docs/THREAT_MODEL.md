@@ -20,6 +20,20 @@ The AEAD construction (XChaCha20-Poly1305) authenticates both the ciphertext and
 
 Lvau uses Argon2id as its key derivation function with configurable cost parameters. The default `balanced` profile uses 64 MB of memory and 2 iterations, making brute-force attacks significantly more expensive than simple hash-based KDFs.
 
+### Bundle manifest integrity
+
+When using bundle mode, the private manifest (file paths, sizes, per-file hashes) is encrypted and authenticated alongside the payload. Tampering with the manifest is detected during extraction.
+
+### Signed provenance (optional)
+
+When an `.lvau` file is signed with Ed25519, the signature covers the public envelope and all ciphertext bytes. This provides:
+
+- **Author attribution**: Verify who created the encrypted artifact.
+- **Tamper evidence**: Any modification to the envelope or ciphertext invalidates the signature.
+- **No decryption required**: Verification works without knowing the decryption password or private key.
+
+> **Important**: Ed25519 signatures and AEAD authentication serve different purposes. AEAD authentication (Poly1305) proves that the ciphertext was not modified *since encryption*. Ed25519 signatures prove *who created* the artifact. AEAD alone does not prove authorship.
+
 ## What Lvau does NOT protect
 
 ### File metadata
@@ -33,6 +47,8 @@ Lvau does **not** encrypt or hide:
 - Directory structure
 
 An attacker who sees your encrypted files can tell how many files you have, how large they are, and when they were last modified.
+
+**Bundle mode note**: By default, bundle mode does not expose internal file names or directory structure in the public inspect output. The private manifest containing file paths is encrypted. However, the total encrypted payload size is visible, and approximate file counts may be inferred from the payload size. Use `--pad bucket` or `--pad fixed:<SIZE>` to reduce size-based inference.
 
 ### Weak passwords
 
@@ -72,6 +88,14 @@ Lvau does not make specific claims about resistance to timing attacks, cache att
 
 Lvau does not manage keys across devices. If you use keypair encryption, keeping your private key synchronized and secure across machines is your responsibility.
 
+### Bundle extraction in hostile environments
+
+Bundle extraction includes safety checks (path traversal, absolute paths, symlinks), but Lvau does not:
+
+- Protect against time-of-check/time-of-use (TOCTOU) races on the filesystem
+- Guarantee atomicity of multi-file extraction
+- Provide secure deletion of extracted plaintext files
+
 ## Assumptions
 
 ### Password-based encryption
@@ -98,16 +122,27 @@ Lvau relies on the following Rust crates for cryptographic operations:
 | Key derivation | `argon2` | Argon2id v0x13 |
 | Key expansion | `hkdf` | HKDF-SHA256 |
 | Hashing | `sha2` | SHA-256 |
+| File hashing (bundles) | `blake3` | BLAKE3 |
 | Key exchange | `x25519-dalek` | X25519 |
 | Post-quantum KEM | `ml-kem` | ML-KEM-768 |
+| Signatures | `ed25519-dalek` | Ed25519 |
 
 These are widely-used, community-reviewed crates. Lvau does not implement any cryptographic primitives from scratch.
+
+### Signing trust model
+
+- Ed25519 signatures prove that someone holding the signing private key created the artifact.
+- Lvau does not provide a certificate authority, key directory, or trust chain.
+- Users must verify signing public keys through out-of-band channels (e.g., checking a project README, receiving the key in person, or verifying a fingerprint).
+- Signing is optional and never required by default.
 
 ## Recovery expectations
 
 ### Lost password
 
 If you lose your password, **your data is unrecoverable**. There is no master key, no recovery mechanism, and no backdoor. This is by design.
+
+(Recovery shares for keypair encryption are planned for v0.4.0. See [ROADMAP.md](ROADMAP.md).)
 
 ### Corrupted files
 
@@ -122,6 +157,7 @@ Lvau does not manage backups. You are responsible for:
 - Backing up your original files before encrypting
 - Backing up your `.lvau` files
 - Backing up your keypair files (`.lvau-key`, `.lvau-pub`) if using keypair encryption
+- Backing up your signing keys (`.lvau-sign`, `.lvau-verify`) if using signatures
 - Storing backups in a separate location
 
 ## Recommended usage
@@ -130,6 +166,8 @@ Lvau does not manage backups. You are responsible for:
 - Encrypting backups at rest
 - Encrypting sensitive documents on a shared machine
 - File-level encryption in scripts or automation
+- Bundling project secrets into a single encrypted artifact
+- Signing release artifacts for integrity verification
 
 ## Unsafe usage
 

@@ -1,6 +1,6 @@
 [package]
 name = "lvau-cli"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 publish = false
 
@@ -13,6 +13,9 @@ secrecy = "0.8"
 log = "0.4.33"
 env_logger = "0.11.11"
 indicatif = "0.17"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+postcard = { version = "1.0", features = ["alloc"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"

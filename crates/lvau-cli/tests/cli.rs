@@ -16,7 +16,20 @@ fn help_lists_core_commands() {
         .stdout(predicate::str::contains("encrypt"))
         .stdout(predicate::str::contains("decrypt"))
         .stdout(predicate::str::contains("inspect"))
-        .stdout(predicate::str::contains("keygen"));
+        .stdout(predicate::str::contains("keygen"))
+        .stdout(predicate::str::contains("bundle"))
+        .stdout(predicate::str::contains("sign-keygen"))
+        .stdout(predicate::str::contains("sign"))
+        .stdout(predicate::str::contains("verify-signature"));
+}
+
+#[test]
+fn version_flag_works() {
+    lvau()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lvau-cli"));
 }
 
 #[test]
@@ -66,6 +79,50 @@ fn password_roundtrip_and_inspect_work() {
         .success();
 
     assert_eq!(fs::read(&decrypted).unwrap(), fs::read(&input).unwrap());
+}
+
+#[test]
+fn inspect_json_output_is_valid() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("input.txt");
+    let encrypted = dir.path().join("input.lvau");
+    let password = dir.path().join("password.txt");
+
+    fs::write(&input, "json test").unwrap();
+    fs::write(&password, "testpass\n").unwrap();
+
+    lvau()
+        .args([
+            "encrypt",
+            "--in-file",
+            input.to_str().unwrap(),
+            "--out-file",
+            encrypted.to_str().unwrap(),
+            "--password-file",
+            password.to_str().unwrap(),
+            "--profile",
+            "fast",
+        ])
+        .assert()
+        .success();
+
+    let output = lvau()
+        .args([
+            "inspect",
+            "--in-file",
+            encrypted.to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json_str = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(parsed["magic"], "LVAU");
+    assert_eq!(parsed["signed"], false);
 }
 
 #[test]

@@ -46,6 +46,53 @@ pub enum Recipient {
     },
 }
 
+/// Distinguishes between single-file encryption and directory bundles.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ContentType {
+    /// Default single-file encryption (v0.2.x behavior).
+    SingleFile,
+    /// Directory bundle with an encrypted manifest.
+    Bundle,
+}
+
+/// Ed25519 signature covering the envelope and ciphertext.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvelopeSignature {
+    /// SHA-256 fingerprint of the signer's Ed25519 public key.
+    pub signer_fingerprint: [u8; 32],
+    /// 64-byte Ed25519 signature.
+    pub signature: Vec<u8>,
+    /// ISO 8601 timestamp of when the signature was created, if available.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Optional comment from the signer.
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+/// Entry in a bundle manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleEntry {
+    /// Relative path within the bundle (forward slashes, no leading /).
+    pub relative_path: String,
+    /// File size in bytes.
+    pub size: u64,
+    /// BLAKE3 hash of the file contents.
+    pub blake3_hash: [u8; 32],
+    /// Byte offset within the concatenated file content blob.
+    pub offset: u64,
+}
+
+/// Manifest for a directory bundle, encrypted as part of the payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleManifest {
+    pub entries: Vec<BundleEntry>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub tool_version: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvelopeHeader {
     pub magic: [u8; 4],
@@ -64,6 +111,17 @@ pub struct Envelope {
     pub secondary_nonce: Option<[u8; 12]>,
     pub aad_hash: [u8; 32],
     pub metadata: Vec<u8>, // encrypted or minimal public metadata
+
+    // v0.3.0 additions — all default to None for backward compatibility with v0.2.x files
+    /// Content type: SingleFile or Bundle. None is treated as SingleFile.
+    #[serde(default)]
+    pub content_type: Option<ContentType>,
+    /// Optional Ed25519 signature covering the envelope and ciphertext.
+    #[serde(default)]
+    pub signature: Option<EnvelopeSignature>,
+    /// Optional user-provided label visible in public inspect output.
+    #[serde(default)]
+    pub public_label: Option<String>,
 }
 
 impl Envelope {
@@ -75,5 +133,10 @@ impl Envelope {
             return Err("Unsupported format version");
         }
         Ok(())
+    }
+
+    /// Returns the effective content type, defaulting to SingleFile for legacy envelopes.
+    pub fn effective_content_type(&self) -> ContentType {
+        self.content_type.clone().unwrap_or(ContentType::SingleFile)
     }
 }

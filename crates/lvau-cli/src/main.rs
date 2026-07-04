@@ -1,14 +1,21 @@
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
+use lvau_core::bundle::{
+    extract_bundle, inspect_bundle, list_bundle, pack_directory, verify_bundle, PaddingProfile,
+};
 use lvau_core::crypto::{
     decrypt_file_keypair, decrypt_file_password, encrypt_file_keypair, encrypt_file_password,
-    inspect_envelope,
     keys::{generate_keypair, HybridPrivateKey, HybridPublicKey},
     verify_file_keypair, verify_file_password,
+};
+use lvau_core::signing::{
+    generate_signing_keypair, key_fingerprint, load_signing_key, load_verify_key,
+    save_signing_key, save_verify_key, sign_file, verify_signature,
 };
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
 use secrecy::Secret;
+use serde::Serialize;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -16,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "lvau-cli")]
+#[command(version)]
 #[command(about = "Boring, inspectable file encryption.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -119,6 +127,10 @@ enum Commands {
         /// Input file path.
         #[arg(short, long)]
         in_file: PathBuf,
+
+        /// Output in JSON format for automation.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Verify file integrity without writing plaintext to disk.
     Verify {
@@ -145,11 +157,180 @@ enum Commands {
         /// Read the seed from a local file instead of prompting.
         #[arg(long)]
         seed_file: Option<PathBuf>,
+
+        /// Output in JSON format for automation.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Pack, extract, inspect, or verify encrypted directory bundles.
+    Bundle {
+        #[command(subcommand)]
+        action: BundleAction,
+    },
+    /// Generate an Ed25519 signing keypair.
+    SignKeygen {
+        /// Base path to save the key files (.lvau-sign and .lvau-verify will be appended).
+        #[arg(short, long)]
+        out_base: PathBuf,
+
+        /// Replace existing key files.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Sign an encrypted .lvau file with an Ed25519 signing key.
+    Sign {
+        /// Input .lvau file to sign.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Path to the signing key (.lvau-sign).
+        #[arg(long)]
+        signing_key: PathBuf,
+
+        /// Output signed .lvau file.
+        #[arg(short, long)]
+        out_file: PathBuf,
+
+        /// Optional comment to include in the signature.
+        #[arg(long)]
+        comment: Option<String>,
+
+        /// Replace an existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Verify an Ed25519 signature on an .lvau file.
+    VerifySignature {
+        /// Input .lvau file to verify.
+        #[arg(short, long)]
+        in_file: PathBuf,
+
+        /// Path to the verifying key (.lvau-verify).
+        #[arg(long)]
+        verify_key: PathBuf,
     },
     /// Run built-in integration tests to ensure cryptography is functioning correctly.
     SelfTest,
     /// Print environment diagnostics and check for required dependencies.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum BundleAction {
+    /// Pack a directory into a single encrypted .lvau bundle.
+    Pack {
+        /// Input directory to pack.
+        #[arg(long)]
+        in_dir: PathBuf,
+
+        /// Output .lvau file.
+        #[arg(long)]
+        out_file: PathBuf,
+
+        /// Use password encryption.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Security profile.
+        #[arg(long, default_value = "balanced")]
+        profile: String,
+
+        /// Allow packing symlinks (rejected by default).
+        #[arg(long, default_value_t = false)]
+        allow_symlinks: bool,
+
+        /// Metadata privacy profile (minimal, balanced, verbose).
+        #[arg(long, default_value = "minimal")]
+        metadata_profile: String,
+
+        /// Size padding profile (none, bucket, fixed:<SIZE>).
+        #[arg(long, default_value = "none")]
+        pad: String,
+
+        /// Optional public label visible in inspect output.
+        #[arg(long)]
+        public_label: Option<String>,
+
+        /// Replace an existing output file.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Inspect public envelope metadata of a bundle.
+    Inspect {
+        /// Input .lvau bundle file.
+        #[arg(long)]
+        in_file: PathBuf,
+
+        /// Output in JSON format.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// List files in a bundle (requires password).
+    List {
+        /// Input .lvau bundle file.
+        #[arg(long)]
+        in_file: PathBuf,
+
+        /// Use password.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Output in JSON format.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Extract files from a bundle.
+    Extract {
+        /// Input .lvau bundle file.
+        #[arg(long)]
+        in_file: PathBuf,
+
+        /// Output directory.
+        #[arg(long)]
+        out_dir: PathBuf,
+
+        /// Use password.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Allow extracting symlinks.
+        #[arg(long, default_value_t = false)]
+        allow_symlinks: bool,
+
+        /// Preview extraction without writing files.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Replace existing files.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Verify bundle integrity without extracting.
+    Verify {
+        /// Input .lvau bundle file.
+        #[arg(long)]
+        in_file: PathBuf,
+
+        /// Use password.
+        #[arg(long, default_value_t = false)]
+        password: bool,
+
+        /// Read the password from a local file instead of prompting.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -178,6 +359,18 @@ impl From<std::io::Error> for CliError {
 impl From<lvau_core::crypto::CryptoError> for CliError {
     fn from(error: lvau_core::crypto::CryptoError) -> Self {
         Self::Crypto(error)
+    }
+}
+
+impl From<lvau_core::bundle::BundleError> for CliError {
+    fn from(error: lvau_core::bundle::BundleError) -> Self {
+        Self::Message(error.to_string())
+    }
+}
+
+impl From<lvau_core::signing::SigningError> for CliError {
+    fn from(error: lvau_core::signing::SigningError) -> Self {
+        Self::Message(error.to_string())
     }
 }
 
@@ -237,6 +430,23 @@ fn parse_profile(profile: &str) -> Result<SecurityProfile, CliError> {
         _ => Err(CliError::Message(
             "Invalid profile. Valid options: fast, balanced, archive, paranoid, extreme"
                 .to_string(),
+        )),
+    }
+}
+
+fn parse_padding(pad: &str) -> Result<PaddingProfile, CliError> {
+    match pad.to_lowercase().as_str() {
+        "none" => Ok(PaddingProfile::None),
+        "bucket" => Ok(PaddingProfile::Bucket),
+        s if s.starts_with("fixed:") => {
+            let size_str = &s[6..];
+            let size: usize = size_str.parse().map_err(|_| {
+                CliError::Message(format!("Invalid fixed padding size: {size_str}"))
+            })?;
+            Ok(PaddingProfile::Fixed(size))
+        }
+        _ => Err(CliError::Message(
+            "Invalid padding. Valid options: none, bucket, fixed:<SIZE>".to_string(),
         )),
     }
 }
@@ -318,6 +528,40 @@ fn get_progress_bar(len: u64) -> ProgressBar {
             .progress_chars("#>-"),
     );
     pb
+}
+
+/// JSON-serializable inspect result.
+#[derive(Serialize)]
+struct InspectResult {
+    magic: String,
+    version: u16,
+    profile: String,
+    algorithm: String,
+    kdf: Option<KdfInfo>,
+    recipient_count: usize,
+    recipients: Vec<RecipientInfo>,
+    content_type: Option<String>,
+    public_label: Option<String>,
+    signed: bool,
+    signer_fingerprint: Option<String>,
+}
+
+#[derive(Serialize)]
+struct KdfInfo {
+    algorithm: String,
+    m_cost: u32,
+    t_cost: u32,
+    p_cost: u32,
+}
+
+#[derive(Serialize)]
+struct RecipientInfo {
+    index: usize,
+    kind: String,
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn run() -> Result<(), CliError> {
@@ -456,40 +700,115 @@ fn run() -> Result<(), CliError> {
 
             println!("Decrypted: {}", out_file.display());
         }
-        Commands::Inspect { in_file } => {
+        Commands::Inspect { in_file, json } => {
             ensure_input_file(&in_file)?;
-            let header = inspect_envelope(&in_file)?;
-            println!("Lvau envelope metadata");
-            println!(
-                "Magic:     {}",
-                std::str::from_utf8(&header.magic).unwrap_or("????")
-            );
-            println!("Version:   {}", header.version);
-            println!("Profile:   {:?}", header.profile);
-            println!("Algorithm: {:?}", header.algorithm);
-            match &header.kdf {
-                Some(KdfParams::Argon2id {
-                    m_cost,
-                    t_cost,
-                    p_cost,
-                    ..
-                }) => {
-                    println!(
-                        "KDF:       Argon2id (m={} KiB, t={}, p={})",
-                        m_cost, t_cost, p_cost
-                    );
-                }
-                None => {
-                    println!("KDF:       None (keypair-based)");
-                }
-            }
-            println!("Recipients: {}", header.recipients.len());
-            for (i, recipient) in header.recipients.iter().enumerate() {
-                match recipient {
-                    Recipient::Password { .. } => println!("  [{i}] Password (FEK wrapped)"),
-                    Recipient::X25519MlkemHybrid { .. } => {
-                        println!("  [{i}] X25519 + ML-KEM-768 hybrid")
+
+            // Read full envelope for content_type, signature, and label
+            let data = fs::read(&in_file)?;
+            let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+            let envelope: lvau_protocol::envelope::Envelope =
+                postcard::from_bytes(&data[4..4 + env_len])
+                    .map_err(|e| CliError::Message(format!("Envelope parse error: {e}")))?;
+
+            let header = &envelope.header;
+            let sig_fingerprint = envelope
+                .signature
+                .as_ref()
+                .map(|s| hex_encode(&s.signer_fingerprint));
+
+            if json {
+                let result = InspectResult {
+                    magic: std::str::from_utf8(&header.magic)
+                        .unwrap_or("????")
+                        .to_string(),
+                    version: header.version,
+                    profile: format!("{:?}", header.profile),
+                    algorithm: format!("{:?}", header.algorithm),
+                    kdf: match &header.kdf {
+                        Some(KdfParams::Argon2id {
+                            m_cost,
+                            t_cost,
+                            p_cost,
+                            ..
+                        }) => Some(KdfInfo {
+                            algorithm: "Argon2id".to_string(),
+                            m_cost: *m_cost,
+                            t_cost: *t_cost,
+                            p_cost: *p_cost,
+                        }),
+                        None => None,
+                    },
+                    recipient_count: header.recipients.len(),
+                    recipients: header
+                        .recipients
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| RecipientInfo {
+                            index: i,
+                            kind: match r {
+                                Recipient::Password { .. } => "Password".to_string(),
+                                Recipient::X25519MlkemHybrid { .. } => {
+                                    "X25519+ML-KEM-768".to_string()
+                                }
+                            },
+                        })
+                        .collect(),
+                    content_type: envelope.content_type.as_ref().map(|ct| format!("{ct:?}")),
+                    public_label: envelope.public_label.clone(),
+                    signed: envelope.signature.is_some(),
+                    signer_fingerprint: sig_fingerprint.clone(),
+                };
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                );
+            } else {
+                println!("Lvau envelope metadata");
+                println!(
+                    "Magic:     {}",
+                    std::str::from_utf8(&header.magic).unwrap_or("????")
+                );
+                println!("Version:   {}", header.version);
+                println!("Profile:   {:?}", header.profile);
+                println!("Algorithm: {:?}", header.algorithm);
+                match &header.kdf {
+                    Some(KdfParams::Argon2id {
+                        m_cost,
+                        t_cost,
+                        p_cost,
+                        ..
+                    }) => {
+                        println!(
+                            "KDF:       Argon2id (m={} KiB, t={}, p={})",
+                            m_cost, t_cost, p_cost
+                        );
                     }
+                    None => {
+                        println!("KDF:       None (keypair-based)");
+                    }
+                }
+                println!("Recipients: {}", header.recipients.len());
+                for (i, recipient) in header.recipients.iter().enumerate() {
+                    match recipient {
+                        Recipient::Password { .. } => println!("  [{i}] Password (FEK wrapped)"),
+                        Recipient::X25519MlkemHybrid { .. } => {
+                            println!("  [{i}] X25519 + ML-KEM-768 hybrid")
+                        }
+                    }
+                }
+                if let Some(ct) = &envelope.content_type {
+                    println!("Content:   {ct:?}");
+                }
+                if let Some(label) = &envelope.public_label {
+                    println!("Label:     {label}");
+                }
+                if envelope.signature.is_some() {
+                    println!("Signed:    yes");
+                    if let Some(fp) = &sig_fingerprint {
+                        println!("Signer:    {fp}");
+                    }
+                } else {
+                    println!("Signed:    no");
                 }
             }
         }
@@ -500,6 +819,7 @@ fn run() -> Result<(), CliError> {
             priv_key,
             seed,
             seed_file,
+            json,
         } => {
             ensure_input_file(&in_file)?;
             require_one_mode(
@@ -525,7 +845,228 @@ fn run() -> Result<(), CliError> {
             }
             pb.finish_and_clear();
 
-            println!("Verification successful: {}", in_file.display());
+            if json {
+                println!("{{\"status\":\"ok\",\"file\":\"{}\"}}", in_file.display());
+            } else {
+                println!("Verification successful: {}", in_file.display());
+            }
+        }
+        Commands::Bundle { action } => match action {
+            BundleAction::Pack {
+                in_dir,
+                out_file,
+                password,
+                password_file,
+                profile,
+                allow_symlinks,
+                metadata_profile: _,
+                pad,
+                public_label: _,
+                force,
+            } => {
+                if !in_dir.is_dir() {
+                    return Err(CliError::Message(format!(
+                        "Input directory does not exist: {}",
+                        in_dir.display()
+                    )));
+                }
+                ensure_output_available(&out_file, force)?;
+
+                let pwd = password_secret(password, password_file.as_deref(), true)?
+                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                let sec_profile = parse_profile(&profile)?;
+                let padding = parse_padding(&pad)?;
+
+                let manifest = pack_directory(
+                    &in_dir,
+                    &out_file,
+                    pwd,
+                    sec_profile,
+                    allow_symlinks,
+                    &padding,
+                    force,
+                )?;
+
+                println!(
+                    "Bundle created: {} ({} files)",
+                    out_file.display(),
+                    manifest.entries.len()
+                );
+            }
+            BundleAction::Inspect { in_file, json } => {
+                ensure_input_file(&in_file)?;
+                let (header, content_type, public_label) = inspect_bundle(&in_file)?;
+
+                if json {
+                    let result = serde_json::json!({
+                        "magic": std::str::from_utf8(&header.magic).unwrap_or("????"),
+                        "version": header.version,
+                        "profile": format!("{:?}", header.profile),
+                        "algorithm": format!("{:?}", header.algorithm),
+                        "content_type": content_type.map(|ct| format!("{ct:?}")),
+                        "public_label": public_label,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                } else {
+                    println!("Bundle envelope metadata");
+                    println!(
+                        "Magic:     {}",
+                        std::str::from_utf8(&header.magic).unwrap_or("????")
+                    );
+                    println!("Version:   {}", header.version);
+                    println!("Profile:   {:?}", header.profile);
+                    println!("Algorithm: {:?}", header.algorithm);
+                    if let Some(ct) = content_type {
+                        println!("Content:   {ct:?}");
+                    }
+                    if let Some(label) = public_label {
+                        println!("Label:     {label}");
+                    }
+                    println!("(File names are encrypted in the payload)");
+                }
+            }
+            BundleAction::List {
+                in_file,
+                password,
+                password_file,
+                json,
+            } => {
+                ensure_input_file(&in_file)?;
+                let pwd = password_secret(password, password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                let manifest = list_bundle(&in_file, pwd)?;
+
+                if json {
+                    let entries: Vec<serde_json::Value> = manifest
+                        .entries
+                        .iter()
+                        .map(|e| {
+                            serde_json::json!({
+                                "path": e.relative_path,
+                                "size": e.size,
+                                "blake3": hex_encode(&e.blake3_hash),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "file_count": manifest.entries.len(),
+                            "entries": entries,
+                        }))
+                        .unwrap()
+                    );
+                } else {
+                    println!("Bundle contents ({} files):", manifest.entries.len());
+                    for entry in &manifest.entries {
+                        println!("  {} ({} bytes)", entry.relative_path, entry.size);
+                    }
+                }
+            }
+            BundleAction::Extract {
+                in_file,
+                out_dir,
+                password,
+                password_file,
+                allow_symlinks,
+                dry_run,
+                force,
+            } => {
+                ensure_input_file(&in_file)?;
+                let pwd = password_secret(password, password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+
+                if !dry_run {
+                    fs::create_dir_all(&out_dir)?;
+                }
+
+                let manifest =
+                    extract_bundle(&in_file, &out_dir, pwd, allow_symlinks, force, dry_run)?;
+
+                if dry_run {
+                    println!(
+                        "Dry run: would extract {} files to {}",
+                        manifest.entries.len(),
+                        out_dir.display()
+                    );
+                    for entry in &manifest.entries {
+                        println!("  {} ({} bytes)", entry.relative_path, entry.size);
+                    }
+                } else {
+                    println!(
+                        "Extracted {} files to {}",
+                        manifest.entries.len(),
+                        out_dir.display()
+                    );
+                }
+            }
+            BundleAction::Verify {
+                in_file,
+                password,
+                password_file,
+            } => {
+                ensure_input_file(&in_file)?;
+                let pwd = password_secret(password, password_file.as_deref(), false)?
+                    .ok_or_else(|| CliError::Message("Missing password".into()))?;
+                let manifest = verify_bundle(&in_file, pwd)?;
+                println!("Bundle verified: {} files", manifest.entries.len());
+            }
+        },
+        Commands::SignKeygen { out_base, force } => {
+            let sign_path = out_base.with_extension("lvau-sign");
+            let verify_path = out_base.with_extension("lvau-verify");
+            ensure_output_available(&sign_path, force)?;
+            ensure_output_available(&verify_path, force)?;
+
+            println!("Generating Ed25519 signing keypair...");
+            let (signing_key, verify_key) = generate_signing_keypair();
+
+            save_signing_key(&signing_key, &sign_path, force)?;
+            save_verify_key(&verify_key, &verify_path, force)?;
+
+            let fingerprint = key_fingerprint(&verify_key);
+            println!("Signing key:  {}", sign_path.display());
+            println!("Verify key:   {}", verify_path.display());
+            println!("Fingerprint:  {}", hex_encode(&fingerprint));
+        }
+        Commands::Sign {
+            in_file,
+            signing_key,
+            out_file,
+            comment,
+            force,
+        } => {
+            ensure_input_file(&in_file)?;
+            ensure_input_file(&signing_key)?;
+            ensure_output_available(&out_file, force)?;
+
+            let key = load_signing_key(&signing_key)?;
+            sign_file(&in_file, &out_file, &key, comment, force)?;
+
+            println!("Signed: {}", out_file.display());
+        }
+        Commands::VerifySignature {
+            in_file,
+            verify_key,
+        } => {
+            ensure_input_file(&in_file)?;
+            ensure_input_file(&verify_key)?;
+
+            let key = load_verify_key(&verify_key)?;
+            match verify_signature(&in_file, &key) {
+                Ok(fingerprint) => {
+                    println!("Signature valid.");
+                    println!("Signer fingerprint: {}", hex_encode(&fingerprint));
+                }
+                Err(lvau_core::signing::SigningError::NotSigned) => {
+                    println!("File is not signed.");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Signature verification failed: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Doctor => {
             println!("Lvau Diagnostics");

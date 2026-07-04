@@ -306,6 +306,9 @@ pub fn encrypt_file_password(
         secondary_nonce: secondary_nonce_bytes,
         aad_hash,
         metadata: Vec::new(),
+        content_type: None,
+        signature: None,
+        public_label: None,
     };
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
@@ -404,6 +407,9 @@ pub fn encrypt_file_keypair(
         secondary_nonce: secondary_nonce_bytes,
         aad_hash,
         metadata: vec![],
+        content_type: None,
+        signature: None,
+        public_label: None,
     };
 
     let hk = Hkdf::<Sha256>::new(None, &*fek);
