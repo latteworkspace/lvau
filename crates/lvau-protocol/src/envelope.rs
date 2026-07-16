@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC_REAL: [u8; 4] = *b"LVAU";
-pub const CURRENT_VERSION: u16 = 1;
+pub const LEGACY_VERSION: u16 = 1;
+pub const CURRENT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SecurityProfile {
@@ -134,7 +135,7 @@ pub struct Envelope {
     pub aad_hash: [u8; 32],
     pub metadata: Vec<u8>, // encrypted or minimal public metadata
 
-    // v0.3.0 additions — all default to None for backward compatibility with v0.2.x files
+    // Optional fields default for legacy v0.2 envelope decoding.
     /// Content type: SingleFile or Bundle. None is treated as SingleFile.
     #[serde(default)]
     pub content_type: Option<ContentType>,
@@ -145,11 +146,10 @@ pub struct Envelope {
     #[serde(default)]
     pub public_label: Option<String>,
 
-    // v0.4.0 additions
+    // Mutable workflow annotations are intentionally outside payload AAD.
     #[serde(default)]
     pub approvals: Vec<ApprovalSignature>,
 
-    // v0.5.0 additions (Release Artifact Mode)
     #[serde(default)]
     pub release_metadata: Option<ReleaseMetadata>,
     #[serde(default)]
@@ -163,7 +163,7 @@ impl Envelope {
         if self.header.magic != MAGIC_REAL {
             return Err("Invalid magic bytes, not a Lvau file");
         }
-        if self.header.version != CURRENT_VERSION {
+        if !(LEGACY_VERSION..=CURRENT_VERSION).contains(&self.header.version) {
             return Err("Unsupported format version");
         }
         Ok(())

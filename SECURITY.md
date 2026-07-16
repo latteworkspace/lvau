@@ -1,59 +1,57 @@
 # Security Policy
 
-## Reporting a vulnerability
+## Private reporting
 
-**Please do not file security vulnerabilities as public GitHub issues.**
+Do not disclose a suspected vulnerability in a public issue, discussion, pull
+request, log, or test fixture. Open a
+[private GitHub security advisory](https://github.com/latteworkspace/lvau/security/advisories/new)
+with:
 
-If you discover a security vulnerability in Lvau, please report it responsibly:
+- affected versions and environment;
+- the smallest safe reproduction;
+- expected and observed behavior;
+- confidentiality, integrity, or availability impact; and
+- a proposed mitigation, if known.
 
-1. **Email**: Send a report to the maintainers via the email listed on the [GitHub profile](https://github.com/lasder-ca), or open a [private security advisory](https://github.com/lasder-ca/lvau/security/advisories/new) on GitHub.
-2. **Include**:
-   - A description of the vulnerability
-   - Steps to reproduce
-   - Affected version(s)
-   - Potential impact
-   - Suggested fix (if any)
+Do not include real passwords, private keys, tokens, user files, OCIDs, or
+production service data. If the advisory form is unavailable, contact the
+maintainers through the current
+[latteworkspace organization profile](https://github.com/latteworkspace)
+without publishing exploit details.
 
 ## Scope
 
-The following are in scope:
+Reports about cryptographic integration, nonce/key/KDF handling, envelope and
+bundle parsing, output-file safety, key permissions, secret leakage, CLI/GUI
+security boundaries, release artifacts, the adjacent `lvau-api`, or the Lvau
+web flow are welcome. Resource-exhaustion findings are in scope when a bounded
+input or unauthenticated request can cause disproportionate impact.
 
-- Cryptographic implementation bugs in `lvau-core`
-- Envelope format parsing vulnerabilities in `lvau-protocol`
-- Key material leakage (memory, logs, filesystem)
-- Authentication bypass
-- Nonce or salt reuse bugs
-- KDF parameter weakness
+Weak user-selected passwords, endpoint compromise, and upstream dependency
+bugs are generally outside Lvau's direct control, but please report an
+Lvau-specific unsafe interaction or missing mitigation privately.
 
-The following are **out of scope**:
+The latest release and the default development branch receive priority.
+Historical pre-1.0 releases may require migration rather than an in-place fix.
 
-- Denial-of-service via large files (known limitation)
-- Weak passwords chosen by users
-- Issues in third-party dependencies (report those upstream, but let us know)
-- Social engineering
+## Audit and maturity status
 
-## Audit status
+Lvau has not been formally audited by an independent third party. Its format is
+not stable before 1.0, and hybrid recipients, cascade/LCO profiles, GUI, SFX,
+recovery, approval/policy workflows, and server processing are experimental.
+Use [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) to evaluate whether those
+boundaries fit your use case.
 
-Lvau has **not been formally audited** by a third-party security firm. The cryptographic design uses standard, well-reviewed primitives (XChaCha20-Poly1305, Argon2id, HKDF-SHA256), but the implementation has not undergone professional review.
+## Key and password files
 
-A formal audit is a goal for future releases.
+Lvau creates private key and recovery-share files with owner-only permissions
+on Unix where supported and applies Windows ACL hardening to private identity
+keys. Unix `--password-file` and `--seed-file` inputs must be regular files with
+no group/world permission bits. Platform backup, administrator access, and
+filesystem semantics can still bypass application-level permissions.
 
-## Key file permissions
+## Coordinated disclosure
 
-Lvau writes private key files with mode `0600` on Unix platforms where this is supported. On Windows, ACL hardening is implemented to ensure only the owner can read or write the `.lvau-key` file via `SetNamedSecurityInfoW`.
-
-## Expected response
-
-- We aim to acknowledge reports within **7 days**
-- We aim to provide a fix or mitigation plan within **30 days** for confirmed vulnerabilities
-- We will credit reporters in the changelog unless they prefer to remain anonymous
-
-## Responsible disclosure
-
-We ask that you:
-
-- Give us reasonable time to investigate and fix the issue before public disclosure
-- Do not exploit the vulnerability beyond what is necessary to demonstrate it
-- Do not access or modify other users' data
-
-Thank you for helping keep Lvau secure.
+Please limit testing to data and systems you are authorized to use and allow
+maintainers reasonable time to investigate before public disclosure. Reporter
+credit will be coordinated through the private advisory.

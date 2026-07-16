@@ -1,9 +1,8 @@
 use crate::policy::{lint_envelope, CapsulePolicy};
 use crate::signing::verify_signature;
 use ed25519_dalek::VerifyingKey;
-use lvau_protocol::envelope::{AlgorithmId, ContentType, Envelope, SecurityProfile};
+use lvau_protocol::envelope::{AlgorithmId, ContentType, SecurityProfile, LEGACY_VERSION};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,43 +76,17 @@ pub fn run_preflight(
         warnings: vec![],
     };
 
-    let data = match fs::read(in_file) {
-        Ok(d) => d,
-        Err(e) => {
-            res.status = PreflightStatus::Fail;
-            res.errors.push(format!("I/O Error reading file: {}", e));
-            return res;
-        }
-    };
-
-    if data.len() < 4 {
-        res.status = PreflightStatus::Fail;
-        res.errors
-            .push("File is too small to contain an envelope length".into());
-        return res;
-    }
-
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        res.status = PreflightStatus::Fail;
-        res.errors
-            .push("File is truncated (envelope length exceeds file size)".into());
-        return res;
-    }
-
-    res.file_size_ok = true;
-
-    let envelope_bytes = &data[4..4 + env_len];
-    let envelope: Envelope = match postcard::from_bytes(envelope_bytes) {
-        Ok(e) => e,
+    let envelope = match crate::crypto::read_envelope_from_path(in_file) {
+        Ok(envelope) => envelope,
         Err(e) => {
             res.status = PreflightStatus::Fail;
             res.parse_error = Some(e.to_string());
-            res.errors.push("Failed to parse Envelope".into());
+            res.errors
+                .push(format!("Failed to parse or validate envelope: {e}"));
             return res;
         }
     };
-
+    res.file_size_ok = true;
     res.parse_ok = true;
     res.version = envelope.header.version;
     res.content_type = match envelope.effective_content_type() {
@@ -136,19 +109,12 @@ pub fn run_preflight(
         res.approvals.push(fp);
     }
 
-    // Check Magic and Version
-    if let Err(e) = envelope.validate() {
-        res.errors.push(e.to_string());
-    }
-
-    // Check AAD Hash
-    match crate::crypto::verify_aad_hash(&envelope) {
-        Ok(_) => res.public_hash_ok = true,
-        Err(_) => {
-            res.public_hash_ok = false;
-            res.errors
-                .push("Public envelope header hash mismatch (tampered)".into());
-        }
+    // The shared parser already checked the version-specific commitment.
+    res.public_hash_ok = true;
+    if envelope.header.version == LEGACY_VERSION {
+        res.warnings.push(
+            "Legacy format v1: plaintext length and public metadata are not payload-authenticated; migrate by decrypting and re-encrypting with Lvau 0.4.0 or later".into(),
+        );
     }
 
     // Experimental features
@@ -179,6 +145,11 @@ pub fn run_preflight(
                     res.errors.push("Signature verification failed".into());
                 }
             }
+        } else {
+            res.warnings.push(
+                "Author signature is present but was not cryptographically verified (no verify key supplied)"
+                    .into(),
+            );
         }
     } else {
         res.warnings.push("No author signature present".into());
@@ -197,9 +168,9 @@ pub fn run_preflight(
         }
 
         if res.policy_ok == Some(false) {
-            if envelope.policy_overridden {
+            if envelope.policy_overridden && envelope.header.version != LEGACY_VERSION {
                 res.warnings.push(
-                    "Artifact violates policy but was explicitly overridden by author".into(),
+                    "Artifact violates policy and carries an authenticated override flag".into(),
                 );
             } else {
                 res.errors.push("Artifact violates local policy".into());

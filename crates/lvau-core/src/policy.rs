@@ -1,5 +1,6 @@
 use lvau_protocol::envelope::{AlgorithmId, Envelope, KdfParams, SecurityProfile};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -135,6 +136,11 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
             rule: "require_signature".into(),
             message: "Policy requires a signature, but none was found.".into(),
         });
+    } else if policy.require_signature {
+        result.warnings.push(PolicyWarning {
+            rule: "require_signature".into(),
+            message: "A signature is present, but envelope linting cannot verify it; run verify-signature with a trusted key.".into(),
+        });
     }
 
     // 2. Recovery requirement
@@ -142,6 +148,11 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
         result.violations.push(PolicyViolation {
             rule: "require_recovery".into(),
             message: "Policy requires recovery metadata, but none was found.".into(),
+        });
+    } else if policy.require_recovery {
+        result.warnings.push(PolicyWarning {
+            rule: "require_recovery".into(),
+            message: "Recovery metadata is present, but envelope linting cannot verify that its referenced shares are available or trusted.".into(),
         });
     }
 
@@ -232,13 +243,36 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     }
 
     // 7. Allow Experimental
+    let has_experimental_recipient = envelope.header.recipients.iter().any(|recipient| {
+        matches!(
+            recipient,
+            lvau_protocol::envelope::Recipient::X25519MlkemHybrid { .. }
+        )
+    });
     if !policy.allow_experimental
         && (envelope.header.profile == SecurityProfile::Extreme
-            || envelope.header.profile == SecurityProfile::Paranoid)
+            || envelope.header.profile == SecurityProfile::Paranoid
+            || has_experimental_recipient)
     {
         result.violations.push(PolicyViolation {
             rule: "allow_experimental".into(),
-            message: "Experimental profiles (Cascade/LCO) are disallowed by policy.".into(),
+            message: "Experimental profiles or hybrid recipients are disallowed by policy.".into(),
+        });
+    }
+
+    // These bundle properties live inside the encrypted payload in the
+    // current format, so public-envelope linting cannot prove them. Refuse to
+    // silently accept a configured rule that was not evaluated.
+    if policy.require_metadata_profile.is_some() {
+        result.violations.push(PolicyViolation {
+            rule: "require_metadata_profile".into(),
+            message: "The metadata profile is encrypted and cannot be verified by public-envelope policy linting.".into(),
+        });
+    }
+    if policy.require_padding.is_some() {
+        result.violations.push(PolicyViolation {
+            rule: "require_padding".into(),
+            message: "The padding profile is not authenticated as a public envelope field and cannot be verified by policy linting.".into(),
         });
     }
 
@@ -265,6 +299,11 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
             rule: "created_by_required".into(),
             message: "Policy requires author/project metadata, but none was found.".into(),
         });
+    } else if policy.created_by_required {
+        result.warnings.push(PolicyWarning {
+            rule: "created_by_required".into(),
+            message: "Author/project metadata is present but is not an identity claim unless covered by a signature from a trusted key.".into(),
+        });
     }
 
     // 10. Recipient count
@@ -280,16 +319,131 @@ pub fn lint_envelope(envelope: &Envelope, policy: &CapsulePolicy) -> PolicyResul
     }
 
     // 11. Approval signatures
-    let approvals_count = envelope.approvals.len() as u32;
+    let approvals_count = envelope
+        .approvals
+        .iter()
+        .map(|approval| approval.signer_fingerprint)
+        .collect::<HashSet<_>>()
+        .len() as u32;
     if approvals_count < policy.require_approval_signatures_min {
         result.violations.push(PolicyViolation {
             rule: "require_approval_signatures_min".into(),
             message: format!(
-                "Policy requires at least {} approvals, but found {}.",
+                "Policy requires at least {} distinct approval fingerprints, but found {}.",
                 policy.require_approval_signatures_min, approvals_count
             ),
+        });
+    } else if policy.require_approval_signatures_min > 0 {
+        result.warnings.push(PolicyWarning {
+            rule: "require_approval_signatures_min".into(),
+            message: "The required number of approval records is present, but policy linting cannot establish signer trust; verify each approval with trusted keys.".into(),
         });
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lvau_protocol::envelope::{
+        ApprovalSignature, ContentType, EnvelopeHeader, Recipient, CURRENT_VERSION, MAGIC_REAL,
+    };
+
+    fn envelope() -> Envelope {
+        Envelope {
+            header: EnvelopeHeader {
+                magic: MAGIC_REAL,
+                version: CURRENT_VERSION,
+                profile: SecurityProfile::Balanced,
+                algorithm: AlgorithmId::XChaCha20Poly1305,
+                kdf: Some(KdfParams::Argon2id {
+                    m_cost: 65_536,
+                    t_cost: 2,
+                    p_cost: 1,
+                    salt: [1; 16],
+                }),
+                recipients: vec![Recipient::Password {
+                    nonce: [2; 24],
+                    encrypted_file_key: vec![3; 48],
+                }],
+            },
+            plaintext_len: 0,
+            nonce: [4; 24],
+            secondary_nonce: None,
+            aad_hash: [5; 32],
+            metadata: vec![],
+            content_type: Some(ContentType::SingleFile),
+            signature: None,
+            public_label: None,
+            approvals: vec![],
+            release_metadata: None,
+            policy_overridden: false,
+            recovery_metadata: None,
+        }
+    }
+
+    #[test]
+    fn approval_threshold_counts_distinct_fingerprints() {
+        let mut envelope = envelope();
+        let approval = ApprovalSignature {
+            signer_fingerprint: [9; 32],
+            signature: vec![0; 64],
+            comment: None,
+        };
+        envelope.approvals = vec![approval.clone(), approval];
+        let policy = CapsulePolicy {
+            require_approval_signatures_min: 2,
+            ..CapsulePolicy::default()
+        };
+
+        let result = lint_envelope(&envelope, &policy);
+
+        assert!(result
+            .violations
+            .iter()
+            .any(|violation| violation.rule == "require_approval_signatures_min"));
+    }
+
+    #[test]
+    fn experimental_hybrid_recipient_is_rejected_when_disallowed() {
+        let mut envelope = envelope();
+        envelope.header.kdf = None;
+        envelope.header.recipients = vec![Recipient::X25519MlkemHybrid {
+            ephemeral_public_x25519: [7; 32],
+            mlkem_ciphertext: vec![8; 32],
+            encrypted_file_key: vec![9; 48],
+        }];
+        let policy = CapsulePolicy {
+            allow_experimental: false,
+            ..CapsulePolicy::default()
+        };
+
+        let result = lint_envelope(&envelope, &policy);
+
+        assert!(result
+            .violations
+            .iter()
+            .any(|violation| violation.rule == "allow_experimental"));
+    }
+
+    #[test]
+    fn unsupported_public_checks_do_not_silently_pass() {
+        let policy = CapsulePolicy {
+            require_metadata_profile: Some(MetadataProfilePolicy::Minimal),
+            require_padding: Some(PaddingPolicy::Bucket),
+            ..CapsulePolicy::default()
+        };
+
+        let result = lint_envelope(&envelope(), &policy);
+
+        assert!(result
+            .violations
+            .iter()
+            .any(|violation| violation.rule == "require_metadata_profile"));
+        assert!(result
+            .violations
+            .iter()
+            .any(|violation| violation.rule == "require_padding"));
+    }
 }

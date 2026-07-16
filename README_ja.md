@@ -1,258 +1,223 @@
 # Lvau
 
-> ローカルファイルと開発者ワークフローのための、署名・ポリシー検証・回復可能な暗号化カプセル。
+> ローカルファイルと開発者ワークフロー向けの、検査可能な暗号化カプセル。
 
-Lvau は Rust 製の暗号化カプセルツールキットです。Lvau カプセルは単なる暗号化ファイルではなく、暗号化ペイロード、暗号化されたプライベートマニフェスト、最小限の公開メタデータ、作成者の署名、受信者スロット、回復ポリシー、成果物ポリシー、検証ステータス、リリース情報を格納できます。
+Lvau は CLI、ネイティブ GUI、暗号ライブラリ、バージョン付き `.lvau` プロトコル、実験的な自己展開 stub からなる Rust workspace です。現在のソースツリーは **0.4.0** の準備版です。この作業では tag や Release を作成していません。
 
-[English](README.md) | Japanese
+[English](README.md) | 日本語
 
-[![CI](https://github.com/lasder-ca/lvau/actions/workflows/ci.yml/badge.svg)](https://github.com/lasder-ca/lvau/actions/workflows/ci.yml)
+[![CI](https://github.com/latteworkspace/lvau/actions/workflows/ci.yml/badge.svg)](https://github.com/latteworkspace/lvau/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **⚠️ 未監査。** Lvau は第三者によるセキュリティ監査を受けていません。[SECURITY.md](SECURITY.md) と [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) を参照してください。
+> **セキュリティ警告:** Lvau は正式な第三者セキュリティ監査を完了しておらず、1.0 より前の形式は安定版ではありません。重要なデータに使う前に [SECURITY.md](SECURITY.md) と [脅威モデル](docs/THREAT_MODEL.md) を読んでください。
 
-## クイックデモ
+## クイックスタート
+
+対話パスワードは非表示で入力し、stdout には出力しません。
 
 ```sh
-lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password
+lvau-cli encrypt --password --in-file secret.txt --out-file secret.txt.lvau
 lvau-cli inspect --in-file secret.txt.lvau
-lvau-cli decrypt --in-file secret.txt.lvau --out-file secret.restored.txt --password
+lvau-cli decrypt --password --in-file secret.txt.lvau --out-file secret.restored.txt
 ```
 
-自動化やテストでは、パスワードをコマンド履歴に残さないためにローカルのパスワードファイルを使えます。
+ローカルの非対話自動化では、権限を制限したパスワードファイルを使います。末尾の CR/LF は取り除きますが、それ以外の文字は保持します。Unix では group/other が読めるパスワード・seed ファイルを拒否します。
 
 ```sh
+printf '%s' '十分に強いパスフレーズへ置換' > password.txt
+chmod 600 password.txt
 lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file password.txt
 ```
 
-## Lvau の特徴
+Windows では、Lvau を実行するアカウントだけが読める ACL を設定してください。Windows のパスワードファイル ACL は自動検証しません。パスワードや seed ファイルを commit しないでください。
 
-Lvau は age、VeraCrypt、Cryptomator、SOPS を置き換えるものではありません。各ツールにはそれぞれ優れた用途があります。
+## 0.4.0 リリース候補の変更
 
-**正直な評価：**
-- **age** はシンプルで監査済みのファイル暗号化に優れています。
-- **VeraCrypt** はフルディスクおよびコンテナ暗号化に優れています。
-- **Cryptomator** は透過的なクラウド同期ボールトに優れています。
-- **SOPS** は構造化シークレット管理に優れています。
-- **Lvau** は、Rust実装、検証可能なエンベロープ、署名付き暗号化成果物、シールドバンドル、回復ワークフロー、CLIファーストの自動化、そしてローカル開発者ワークフローに注力しています。
+- 新規ファイルは envelope 形式 v2 を使用します。AEAD の認証対象に平文長、nonce、受信者/KDF header、公開 label、content type、private metadata bytes、policy override marker を含めます。
+- 空ペイロードにも認証済み AEAD frame を保存し、復号時に余分な暗号文を拒否します。
+- 形式 v1 と旧 v0.2 envelope は、上限付き・完全消費 parser で読み続けられます。v1 の長さと header 外 metadata は payload 認証の対象ではなかったため、旧 capsule は復号して v2 として再暗号化してください。
+- 高コスト処理の前に envelope size、recipient 数/種別、wrapped key size、nonce 構成、Argon2id profile tuple を検証します。
+- 著者署名と approval seal は fingerprint/comment を署名し、v2 approval は暗号文にも結び付きます。ただし信頼済み鍵による明示的な検証は別途必要です。
+- bundle manifest に canonical decode、checked offset、重複/path/collision 検査、entry ごとの BLAKE3 検証を追加しました。
+- bundle 作成は特殊ファイルを拒否し、展開は `--force` を指定しても symlink/reparse point や複数 hardlink を持つ既存 target を上書きしません。
+- recovery share は `SHA-256(secret)` を set identifier として公開せず、修正版 Shamir 実装 `blahaj` を使います。
+- 機密出力は同一 directory の一時ファイル、fsync、Unix の制限権限、platform が対応する atomic replacement を使います。
+- GUI の暗号処理を background worker へ移し、処理済み byte 数を表示します。dispatch 後は password/seed field を消去し、実験的 SFX は atomic temporary output へ streaming 生成します。
+- CI は Linux/Windows/macOS を検証し、Actions を commit 固定し、release tag と全 crate version を照合し、checksum、CycloneDX SBOM、GitHub artifact attestation を準備します。
 
-### 比較表
+全体は [CHANGELOG.md](CHANGELOG.md) と [共通 Release Notes](docs/RELEASE_NOTES.md) を参照してください。
 
-| 機能 | Lvau | age | VeraCrypt | Cryptomator | SOPS |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| ファイル暗号化 | ✅ | ✅ | — | — | — |
-| ディレクトリバンドル | ✅ | — | — | ✅ | — |
-| ディスク/コンテナ暗号化 | — | — | ✅ | — | — |
-| クラウド同期 | — | — | — | ✅ | — |
-| 構造化シークレット | ✅ | — | — | — | ✅ |
-| カプセルポリシー・回復 | ✅ | — | — | — | — |
-| 署名付き成果物・承認 | ✅ | — | — | — | ✅ |
-| CLI 自動化 | ✅ | ✅ | 限定的 | — | ✅ |
-| GUI | ✅ | — | ✅ | ✅ | — |
-| 正式監査済み | **いいえ** | **はい** | **はい** | **はい** | 場合による |
-| 実装 | Rust | Go | C++ | Java | Go |
+## 利用可能な機能と実験的機能
 
-## 主な機能
+検証対象としている主な経路:
 
-- 既定のパスワード暗号化に XChaCha20-Poly1305 AEAD を使用
-- Argon2id KDF と `fast`、`balanced`、`archive`、`paranoid`、`extreme` プロファイル
-- HKDF-SHA256 による鍵分離
-- マジックバイト、バージョン、KDF メタデータ、nonce、認証済みヘッダーハッシュ、平文長を含む `.lvau` エンベロープ
-- Rayon による 1 MiB チャンク単位の並列処理
-- CLI の非表示パスワード入力と、非対話実行用の `--password-file`
-- 既存出力の上書きを既定で拒否し、必要な場合だけ `--force` を使用
-- 一時ファイル経由のアトミック出力書き込み
-- inspect と verify コマンドの `--json` 出力
-- `egui` ベースのネイティブ GUI
+- XChaCha20-Poly1305、Argon2id、HKDF-SHA256 によるパスワード暗号化。
+- 通常ファイルを全量 memory に載せない 1 MiB streaming chunk。
+- 公開情報の inspect、認証付き decrypt/verify、inspect/verify/preflight の JSON、`--force` なしの上書き拒否。
+- Ed25519 著者署名。
+- 暗号化 manifest を持つパスワード式 directory bundle。
+- ローカル policy lint、preflight report、recipient group、recovery share、structured-secret command。
 
-### v0.3.0 の新機能
+実験的な経路:
 
-- **シールドバンドルモード** — ディレクトリを認証済みマニフェスト付きの1つの暗号化 `.lvau` ファイルにまとめます。メタデータプライバシーとサイズパディングを設定可能。
-- **署名付き来歴** — Ed25519 で暗号化成果物に署名。復号パスワードなしで作成者を検証。
-- **強化されたテスト** — プロパティラウンドトリップテスト、破損エンベロープテスト、パストラバーサルテストなど。
-- **`--json` 出力** — inspect と verify の機械可読出力。
+- X25519 + ML-KEM-768 hybrid recipient encryption。
+- `paranoid` / `extreme` cascade profile。
+- `extreme` の LCO。これは難読化であり、暗号学的 security boundary ではありません。
+- native GUI と Windows 自己展開 archive。
+- workflow annotation としての approval seal、release metadata、recovery metadata。
 
-## 実験的な機能
-
-v0.3.0 では、次の機能は実験的です。
-
-- X25519 + ML-KEM-768 によるハイブリッド鍵ペア暗号化
-- `paranoid` と `extreme` のカスケードプロファイル
-- `extreme` で使われる LCO 層。LCO は難読化であり、暗号学的な安全性の境界ではありません。
-- Windows 向け自己展開アーカイブ (`--sfx`)
-
-## セキュリティ警告
-
-> **⚠️ 弱いパスワードを使わないでください。** Argon2id はブルートフォース攻撃を遅くしますが、`password123` や `1234` のようなパスワードは保護できません。最低4〜5個のランダムな単語のパスフレーズ、またはパスワードマネージャーで生成した16文字以上のパスワードを使ってください。
-
-> **⚠️ 未監査。** 暗号設計は標準的で十分にレビューされたプリミティブを使用していますが、実装は専門家によるレビューを受けていません。機密性の高い本番用途では、age、VeraCrypt、Cryptomator などの監査済みツールも検討してください。
+Policy と approval はローカルの助言的 check です。存在するだけでは復号権限を強制せず、signer の信頼を証明せず、外部 M-of-N authorization system の代わりにはなりません。[docs/APPROVALS.md](docs/APPROVALS.md) と [docs/CAPSULE_POLICY.md](docs/CAPSULE_POLICY.md) を参照してください。
 
 ## インストール
 
-### リリースバイナリ
+Release archive は、権限を持つ人が tag workflow を実行した後にだけ [GitHub Releases](https://github.com/latteworkspace/lvau/releases) へ公開されます。
 
-[GitHub Releases](https://github.com/lasder-ca/lvau/releases) からダウンロードできます。
-
-| プラットフォーム | アセット |
+| Platform | 予定 asset 名 |
 | --- | --- |
 | Linux x86_64 | `lvau-x86_64-unknown-linux-gnu.tar.gz` |
 | Windows x86_64 | `lvau-x86_64-pc-windows-msvc.zip` |
 | macOS x86_64 | `lvau-x86_64-apple-darwin.tar.gz` |
 | macOS aarch64 | `lvau-aarch64-apple-darwin.tar.gz` |
 
-各アーカイブには `lvau-cli`、`lvau-gui`、`lvau-stub`、`README.md`、`LICENSE` が含まれます。Windows では `.exe` が付きます。ダウンロード後はリリースの `checksums.txt` で検証してください。
+Archive を `checksums.txt` と照合し、利用可能なら GitHub CLI で artifact attestation も検証してください。各 archive には `lvau-cli`、`lvau-gui`、`lvau-stub`、両 README、`SECURITY.md`、`LICENSE` が入ります（Windows は `.exe`）。
 
-### ソースからビルド
+### ソースから build
 
 ```sh
-git clone https://github.com/lasder-ca/lvau.git
+git clone https://github.com/latteworkspace/lvau.git
 cd lvau
-cargo build --workspace --release
+cargo build --locked --workspace --release
 ```
 
-生成物は `target/release/` に置かれます。
+Binary は `target/release/` に生成されます。
 
-## CLI の使い方
+### Explorer の右クリックメニュー
+
+管理者権限なしで現在の user だけに `Lvau` menu を登録できます。`.lvau` file は復号し、それ以外は暗号化します。入力の隣に出力を作成し、既存 file は上書きせず、password は毎回 prompt します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install-context-menu.ps1 `
+  -BinaryPath .\target\release\lvau-cli.exe
+```
+
+削除:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall-context-menu.ps1
+```
+
+## CLI
+
+正確な option は `lvau-cli <command> --help` を確認してください。Top-level command は次の通りです。
 
 ```text
-lvau-cli <COMMAND> [OPTIONS]
-
-Commands:
-  encrypt          ファイルを暗号化
-  decrypt          ファイルを復号
-  inspect          復号せずに公開エンベロープメタデータを表示
-  keygen           実験的ハイブリッド鍵ペアを生成
-  verify           復号せずにファイル整合性を検証
-  bundle           ディレクトリバンドルの作成・展開・検証
-  sign-keygen      Ed25519 署名鍵ペアを生成
-  sign             .lvau ファイルに署名
-  verify-signature .lvau ファイルの署名を検証
-  self-test        組み込み統合テストを実行
-  doctor           環境診断を表示
+keygen  encrypt  decrypt  inspect  verify  preflight  report  policy
+bundle  sign-keygen  sign  verify-signature  approve  approvals
+release  recipients  recovery  secret  self-test  doctor
 ```
 
-### パスワードで暗号化
+よく使う例:
 
 ```sh
-lvau-cli encrypt --in-file document.pdf --out-file document.pdf.lvau --password
-```
+# Password encryption と検証
+lvau-cli encrypt --password --in-file document.pdf --out-file document.pdf.lvau --profile balanced
+lvau-cli verify --password --in-file document.pdf.lvau --json
+lvau-cli decrypt --password --in-file document.pdf.lvau --out-file document.pdf
 
-### 復号
+# 実験的 hybrid recipient encryption
+lvau-cli keygen --out-base identity
+lvau-cli encrypt --in-file input.txt --out-file output.lvau --pub-key identity.lvau-pub
+lvau-cli decrypt --in-file output.lvau --out-file restored.txt --priv-key identity.lvau-key
 
-```sh
-lvau-cli decrypt --in-file document.pdf.lvau --out-file document.pdf --password
-```
-
-### 復号せずに公開メタデータを確認
-
-```sh
-lvau-cli inspect --in-file document.pdf.lvau
-lvau-cli inspect --in-file document.pdf.lvau --json
-```
-
-### ディレクトリをバンドル
-
-```sh
-lvau-cli bundle pack --in-dir ./project-secrets/ --out-file secrets.lvau --password
+# Password bundle
+lvau-cli bundle pack --password --in-dir ./project-secrets --out-file secrets.lvau
 lvau-cli bundle inspect --in-file secrets.lvau
-lvau-cli bundle list --in-file secrets.lvau --password
-lvau-cli bundle verify --in-file secrets.lvau --password
-lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password
-lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password --dry-run
-```
+lvau-cli bundle list --password --in-file secrets.lvau
+lvau-cli bundle verify --password --in-file secrets.lvau
+lvau-cli bundle extract --password --in-file secrets.lvau --out-dir ./restored --dry-run
+lvau-cli bundle extract --password --in-file secrets.lvau --out-dir ./restored
 
-### 署名と検証
-
-```sh
+# Signature
 lvau-cli sign-keygen --out-base maintainer
-lvau-cli sign --in-file release.lvau --signing-key maintainer.lvau-sign --out-file release-signed.lvau
-lvau-cli verify-signature --in-file release-signed.lvau --verify-key maintainer.lvau-verify
+lvau-cli sign --in-file secrets.lvau --out-file secrets-signed.lvau --signing-key maintainer.lvau-sign
+lvau-cli verify-signature --in-file secrets-signed.lvau --verify-key maintainer.lvau-verify
 ```
 
-### 回復シェア (Recovery Shares)
+Bundle の list/extract/verify は現在 password credential のみを受け付け、hybrid bundle extraction は CLI に公開していません。
 
-マスターキーを Shamir シェアに分割し、安全なオフライン回復を実現します。
+### Security profile
+
+| Profile | Argon2id parameter | Payload path | Status |
+| --- | --- | --- | --- |
+| `fast` | 16 MiB, 1 iteration, 1 lane | XChaCha20-Poly1305 | Test/短時間の local 処理向け |
+| `balanced` | 64 MiB, 2 iterations, 1 lane | XChaCha20-Poly1305 | Default |
+| `archive` | 256 MiB, 3 iterations, 2 lanes | XChaCha20-Poly1305 | 低頻度 archive 向け |
+| `paranoid` | 1 GiB, 4 iterations, 4 lanes | AES-GCM + XChaCha cascade | 実験的 |
+| `extreme` | 1 GiB, 4 iterations, 4 lanes | Cascade + LCO | 実験的 |
+
+### Recovery share
+
+Recovery は private key などの file を分割します。各 share を機密情報として保護してください。
 
 ```sh
-lvau-cli recovery split --in-key my-identity.lvau-key --shares 5 --threshold 3 --out-dir ./shares/
-lvau-cli recovery inspect --share ./shares/share-1.lvau-share
-lvau-cli recovery combine --shares-dir ./shares/ --out-key restored.lvau-key
+lvau-cli recovery split --in-file identity.lvau-key --shares 5 --threshold 3 --out-dir ./shares
+lvau-cli recovery inspect --in-file ./shares/share-1.lvau-share
+lvau-cli recovery combine --shares-dir ./shares --out-file restored.lvau-key
 ```
 
-### Rekey / 受信者スロット
+### Structured secret
 
-完全に再暗号化することなく、複数の受信者向けにデータ暗号化キーをラップします。
+出力名は command が自動選択し、password は対話入力します。`secret print` は意図的に平文を stdout へ出すため、log に記録される環境では使わないでください。
 
 ```sh
-lvau-cli rekey add-recipient --in-file secrets.lvau --out-file secrets-shared.lvau --pub-key alice.lvau-pub
-lvau-cli rekey list-recipients --in-file secrets-shared.lvau
-lvau-cli rekey remove-recipient --in-file secrets-shared.lvau --out-file secrets-revoked.lvau --recipient 0xABC123
+lvau-cli secret encrypt --in-file .env
+lvau-cli secret edit --in-file .env.lvau
+lvau-cli secret print --in-file .env.lvau
+lvau-cli secret decrypt --in-file .env.lvau
 ```
-
-### 構造化シークレットモード
-
-dotfiles や設定ファイル向けの軽量な開発者ワークフローです。
-
-```sh
-lvau-cli secret encrypt --in-file .env --out-file .env.lvau --format dotenv --password
-lvau-cli secret edit --in-file .env.lvau --password
-lvau-cli secret print --in-file .env.lvau --password --redact
-lvau-cli secret decrypt --in-file .env.lvau --out-file .env --password
-```
-
-| プロファイル | Argon2id メモリ | 想定用途 |
-| --- | ---: | --- |
-| `fast` | 16 MiB | テストや短時間のローカル処理 |
-| `balanced` | 64 MiB | 既定の一般用途 |
-| `archive` | 256 MiB | 低頻度のアーカイブ用途 |
-| `paranoid` | 1 GiB | 実験的なカスケードプロファイル |
-| `extreme` | 1 GiB | 実験的なカスケード + LCO 難読化 |
-
-既存ファイルを置き換える場合は `--force` を付けます。指定しない場合、Lvau は上書きを拒否します。
 
 ## GUI
 
-`lvau-gui` は、ファイル選択、パスワードまたは鍵ペアモード、プロファイル選択、ステータス表示、ログ表示を備えています。CLI の信頼性を最優先とし、GUI は補助的な位置づけです。
+`lvau-gui` は暗号処理を重複実装せず `lvau-core` を利用します。ローカル file の暗号化/復号と hybrid key generation 向けの実験的 UI で、全 CLI workflow との parity はまだありません。
 
 ```sh
-cargo run --release --package lvau-gui
+cargo run --locked --release --package lvau-gui
 ```
 
-## セキュリティモデル
+## Security と format の限界
 
-Lvau は、ローカルファイルを保存時に暗号化するためのツールです。攻撃者が暗号化済み `.lvau` ファイルを入手しても、正しいパスワードまたは秘密鍵がなければ内容を読めないことを目指します。
+Lvau は password/private key と local machine が安全な場合に payload の機密性と完全性を保護します。Malware、keylogger、侵害済み OS、弱い password、盗まれた key、悪意ある出力 consumer、全 credential の紛失からは保護しません。
 
-Lvau は、ファイル名、ファイルシステム上のメタデータ、平文サイズのおおよその情報を隠しません。また、マルウェア、キーロガー、侵害された OS、弱いパスワード、盗まれた秘密鍵からは保護できません。
+Envelope は algorithm、KDF parameter、recipient slot、nonce、概算 plaintext size、任意の public label を公開します。Bundle path と file metadata は既定で encrypted payload 内です。Signature、approval、release、recovery field は変更可能な annotation であり、別途検証・解釈が必要です。
 
-Lvau は正式な第三者監査を受けていません。機密性の高い本番用途では、age、VeraCrypt、Cryptomator、rclone crypt などの実績あるツールも検討してください。
+Disk layout は 4-byte little-endian envelope length、上限付き postcard envelope、認証済み ciphertext chunk です。v2/v1 と migration は [docs/FORMAT.md](docs/FORMAT.md) を参照してください。
 
-詳しくは [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) を読んでください。
+## Architecture
 
-## ロードマップ
+| Crate | 責務 |
+| --- | --- |
+| `lvau-protocol` | Serialized envelope / manifest type |
+| `lvau-core` | Crypto、parser、file、bundle、signing、policy、recovery |
+| `lvau-cli` | CLI UX と automation output |
+| `lvau-gui` | `lvau-core` 上の実験的 native GUI |
+| `lvau-stub` | 実験的 SFX extractor |
 
-| バージョン | テーマ | 主な機能 |
-| --- | --- | --- |
-| **v0.3.0** | 検証可能・署名付き・シールド | バンドル、Ed25519 署名、テスト強化、ドキュメント刷新 |
-| **v0.4.0** | ポリシー検証カプセル | カプセルポリシー、事前検証、承認シール、差分、グループ、メタデータ |
-| **v1.0** | 安定フォーマット | フォーマット凍結、正式監査目標、安定 API |
-
-詳細は [docs/ROADMAP.md](docs/ROADMAP.md) を参照してください。
+Public website は隣接する `lattes.jp` repository、OCI 上の server API は隣接する `lvau-api` repository にあります。Rust workspace 自体には OCI SDK や OCI control-plane client はありません。
 
 ## 開発
 
+Documented local workflow は WSL2 / Ubuntu 26.04 を前提にします。
+
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace --release
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+cargo build --locked --workspace --release
+cargo tree --duplicates
 ```
 
-貢献方法は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+[AGENTS.md](AGENTS.md)、[CONTRIBUTING.md](CONTRIBUTING.md)、[docs/ROADMAP.md](docs/ROADMAP.md) を読んでください。機密性の高い脆弱性を public issue へ投稿せず、[SECURITY.md](SECURITY.md) の手順を使ってください。
 
-## セキュリティ報告
-
-機密性の高い脆弱性を public GitHub issue に投稿しないでください。[SECURITY.md](SECURITY.md) を参照してください。
-
-## ライセンス
+## License
 
 MIT。詳細は [LICENSE](LICENSE) を参照してください。

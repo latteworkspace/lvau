@@ -1,40 +1,46 @@
-# M-of-N Approvals
+# Approval Seals
 
-Lvau supports an M-of-N approval system to prevent unilateral decryption of sensitive capsules. This ensures that even if an attacker or a rogue employee obtains the decryption key, they cannot decrypt the capsule without additional approval seals from trusted authorities.
+Approval seals are advisory Ed25519 attestations attached to a capsule. They
+support review workflows, but they are **not** M-of-N decryption keys and do not
+prevent a holder of the password or private key from decrypting. Lvau does not
+currently gate `decrypt` or `bundle extract` on approval count.
 
-## How Approvals Work
+## Create and verify a seal
 
-1. A capsule is created with an attached `policy.toml` that sets `min_approvals = 2`.
-2. The capsule is distributed to the team.
-3. If an individual attempts to extract the capsule, `lvau-cli` will fail and report that it lacks the required approvals.
-4. Two distinct, trusted authorities must generate an approval seal for the capsule.
-5. The seals are appended to the capsule's public metadata.
-6. The capsule can now be successfully extracted.
-
-## Generating and Appending Approvals
-
-### 1. Generate a Signing Keypair
-
-Authorities must have their own Ed25519 signing keypairs.
+Create a signing key and distribute its `.lvau-verify` public key through a
+trusted channel:
 
 ```sh
 lvau-cli sign-keygen --out-base manager_key
+lvau-cli approve \
+  --in-file bundle.lvau \
+  --out-file bundle-approved.lvau \
+  --signing-key manager_key.lvau-sign \
+  --comment "reviewed for release"
+lvau-cli approvals \
+  --in-file bundle-approved.lvau \
+  --verify-key manager_key.lvau-verify
 ```
 
-### 2. Approve the Capsule
+Each additional approver reads the previous output and writes a new output.
+Keep the private `.lvau-sign` file secret; only the `.lvau-verify` file should
+be shared for verification.
 
-An authority inspects the capsule using `preflight` or `report`, ensures its validity, and then applies their approval seal:
+V2 seals commit to the public envelope (excluding the approval list), all
+ciphertext, the approving-key fingerprint, and the approval comment. V1 seals
+cover only the legacy `aad_hash` and provide weaker evidence.
 
-```sh
-lvau-cli approve --in-file bundle.lvau --sign-key manager_key.lvau-sign
-```
+## Policy counts are not trust decisions
 
-### 3. Verify Approvals
+`require_approval_signatures_min` counts distinct stored signer fingerprints.
+Policy lint does not verify every seal, prove that the fingerprints belong to
+authorized people, or enforce decryption authorization. A forged record can be
+present but invalid. Verify each required key explicitly with `approvals`, then
+apply organization-specific identity and threshold rules outside Lvau.
 
-You can verify how many valid seals are attached to a capsule:
+`preflight` lists approval fingerprints but likewise does not cryptographically
+verify them. Treat an unverified fingerprint as attacker-controlled metadata.
 
-```sh
-lvau-cli approvals --in-file bundle.lvau
-```
-
-Once the threshold defined in the policy is reached, the capsule becomes unlockable.
+For a true threshold-decryption design, the cryptographic key material itself
+must be threshold-controlled. That feature is not implemented by approval
+seals.

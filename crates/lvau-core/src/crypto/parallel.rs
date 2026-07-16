@@ -38,12 +38,14 @@ fn expand_key(
 ///
 /// # Security invariants
 /// - Each chunk gets a unique nonce derived by XORing the chunk index into
-///   the first 4 bytes of the base nonce.
-/// - Each chunk uses the header hash + chunk index as AEAD AAD, binding every chunk to the
-///   envelope header and preventing chunk reordering attacks.
+///   the first 8 bytes of the base nonce.
+/// - Each chunk uses the version-specific envelope commitment + chunk index
+///   as AEAD AAD, binding every chunk to the committed public fields and
+///   preventing chunk reordering attacks.
 #[allow(clippy::too_many_arguments)]
 pub fn stream_encrypt_payload(
     algorithm: &AlgorithmId,
+    format_version: u16,
     reader: &mut dyn Read,
     writer: &mut dyn Write,
     hk: &Hkdf<Sha256>,
@@ -101,7 +103,14 @@ pub fn stream_encrypt_payload(
         }
 
         if batch_plaintext.is_empty() {
-            break;
+            if format_version >= lvau_protocol::envelope::CURRENT_VERSION && global_chunk_idx == 0 {
+                // A v2 empty capsule still needs an AEAD tag. Without this
+                // frame, public envelope fields could be changed without any
+                // keyed payload authentication taking place.
+                batch_plaintext.push(Vec::new());
+            } else {
+                break;
+            }
         }
 
         let num_chunks_in_batch = batch_plaintext.len();
@@ -240,6 +249,7 @@ pub fn stream_encrypt_payload(
 #[allow(clippy::too_many_arguments)]
 pub fn stream_decrypt_payload(
     algorithm: &AlgorithmId,
+    format_version: u16,
     reader: &mut dyn Read,
     writer: &mut dyn Write,
     hk: &Hkdf<Sha256>,
@@ -284,12 +294,19 @@ pub fn stream_decrypt_payload(
             let remaining = plaintext_len.saturating_sub(
                 total_bytes_written + (batch_ciphertext.len() as u64 * CHUNK_SIZE as u64),
             );
-            if remaining == 0 {
+            let is_v2_empty_frame = format_version >= lvau_protocol::envelope::CURRENT_VERSION
+                && plaintext_len == 0
+                && global_chunk_idx == 0
+                && batch_ciphertext.is_empty();
+
+            if remaining == 0 && !is_v2_empty_frame {
                 eof_reached = true;
                 break;
             }
 
-            let expected_read_size = if remaining < CHUNK_SIZE as u64 {
+            let expected_read_size = if is_v2_empty_frame {
+                tag_size
+            } else if remaining < CHUNK_SIZE as u64 {
                 (remaining as usize) + tag_size
             } else {
                 encrypted_chunk_size
@@ -318,7 +335,7 @@ pub fn stream_decrypt_payload(
                 batch_ciphertext.push(chunk);
             }
 
-            if remaining < CHUNK_SIZE as u64 {
+            if is_v2_empty_frame || remaining < CHUNK_SIZE as u64 {
                 eof_reached = true;
                 break;
             }
@@ -455,6 +472,11 @@ pub fn stream_decrypt_payload(
     }
 
     if total_bytes_written != plaintext_len {
+        return Err(CryptoError::DecryptionFailed);
+    }
+
+    let mut trailing = [0u8; 1];
+    if reader.read(&mut trailing).map_err(CryptoError::Io)? != 0 {
         return Err(CryptoError::DecryptionFailed);
     }
 

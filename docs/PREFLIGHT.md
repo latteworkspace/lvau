@@ -1,25 +1,35 @@
-# Preflight Inspections
+# Preflight Inspection
 
-A core feature of Lvau is the ability to inspect and verify an encrypted capsule *without* having the decryption password or private key.
-
-## `lvau-cli preflight`
-
-The `preflight` command analyzes the public envelope of a capsule and generates a security report.
+`preflight` parses and validates the public envelope without decrypting the
+payload:
 
 ```sh
-lvau-cli preflight --in-file mybundle.lvau
+lvau-cli preflight --in-file artifact.lvau
+lvau-cli preflight \
+  --in-file artifact.lvau \
+  --verify-key author.lvau-verify \
+  --policy policy.toml \
+  --json
 ```
 
-### What it checks
+It reports format version, content type, profile, payload algorithm, recipient
+count, public commitment consistency, workflow metadata, experimental flags,
+policy results, and author-signature status. Status is `Ok`, `Warn`, or `Fail`.
+Malformed, oversized, truncated, resource-invalid, or unsupported envelopes
+fail parsing. Legacy v1 files warn that several public fields are not bound to
+the payload commitment.
 
-1. **Version Compatibility**: Ensures your version of Lvau can parse the capsule.
-2. **Security Profile**: Extracts the KDF profile and cryptographic algorithm used.
-3. **Public Hash Integrity**: Verifies that the public manifest has not been tampered with.
-4. **Signature Status**: Checks for the presence of an author signature.
-5. **Metadata Presence**: Detects if recovery shares or release metadata are attached.
-6. **Policy Overrides**: Determines if the author forced policy overrides during encryption.
+An author signature is verified only when `--verify-key` is supplied. Without
+that key, a present signature produces a warning and is not an identity claim.
+Approval fingerprints are listed but not verified by preflight. Policy presence
+checks have the limitations documented in [CAPSULE_POLICY.md](CAPSULE_POLICY.md).
 
-### Preflight vs Inspect
+The public hash is not a signature or MAC: an attacker can rewrite an unsigned
+envelope and recompute it. Its cryptographic authority comes only when the v2
+payload successfully authenticates against the same commitment, or when the
+capsule is verified with a trusted author/approval key.
 
-- `lvau-cli inspect` simply dumps the raw JSON or human-readable data from the capsule manifest.
-- `lvau-cli preflight` acts as a **doctor** for the capsule, actively analyzing the parameters to provide `Warn`, `Pass`, or `Fail` signals based on modern security standards.
+`inspect` is intended for basic public metadata. `preflight` adds validation,
+warnings, optional signature verification, and optional policy linting. Neither
+command proves that a password/private key works; use `verify` or `report` with
+credentials for that check.

@@ -4,48 +4,98 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: rustfmt
-      - name: cargo fmt
+      - name: Check formatting
         run: cargo fmt --all --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install Linux GUI dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
-      - name: cargo test
-        run: cargo test --workspace --all-features
+      - name: Run workspace tests
+        run: cargo test --locked --workspace --all-features
+      - name: CLI roundtrip (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf 'lvau cross-platform smoke test' > "$work/input.txt"
+          printf 'ci-only-password' > "$work/password.txt"
+          chmod 600 "$work/password.txt"
+          cargo run --locked --quiet --package lvau-cli -- encrypt --password --in-file "$work/input.txt" --out-file "$work/input.lvau" --password-file "$work/password.txt" --profile fast
+          cargo run --locked --quiet --package lvau-cli -- inspect --in-file "$work/input.lvau" --json > "$work/inspect.json"
+          cargo run --locked --quiet --package lvau-cli -- decrypt --password --in-file "$work/input.lvau" --out-file "$work/output.txt" --password-file "$work/password.txt"
+          cmp "$work/input.txt" "$work/output.txt"
+      - name: CLI roundtrip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lvau-smoke"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          Set-Content -LiteralPath (Join-Path $work "input.txt") -Value "lvau cross-platform smoke test" -NoNewline
+          Set-Content -LiteralPath (Join-Path $work "password.txt") -Value "ci-only-password" -NoNewline
+          cargo run --locked --quiet --package lvau-cli -- encrypt --password --in-file (Join-Path $work "input.txt") --out-file (Join-Path $work "input.lvau") --password-file (Join-Path $work "password.txt") --profile fast
+          cargo run --locked --quiet --package lvau-cli -- inspect --in-file (Join-Path $work "input.lvau") --json | Set-Content -LiteralPath (Join-Path $work "inspect.json")
+          cargo run --locked --quiet --package lvau-cli -- decrypt --password --in-file (Join-Path $work "input.lvau") --out-file (Join-Path $work "output.txt") --password-file (Join-Path $work "password.txt")
+          if ((Get-FileHash (Join-Path $work "input.txt")).Hash -ne (Get-FileHash (Join-Path $work "output.txt")).Hash) { throw "CLI roundtrip mismatch" }
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install Linux GUI dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
-      - name: cargo build release
-        run: cargo build --workspace --release
+      - name: Build release workspace
+        run: cargo build --locked --workspace --release
