@@ -2523,7 +2523,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "toml",
  "walkdir",
  "windows-sys 0.52.0",
