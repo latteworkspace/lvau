@@ -2449,8 +2449,28 @@ fn run_self_test() -> Result<(), CliError> {
     }
 }
 
+#[cfg(windows)]
+fn run_with_platform_stack() -> Result<(), CliError> {
+    const WINDOWS_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+    let worker = std::thread::Builder::new()
+        .name("lvau-cli".to_string())
+        .stack_size(WINDOWS_STACK_SIZE)
+        .spawn(run)
+        .map_err(|error| CliError::Message(format!("Failed to start CLI worker: {error}")))?;
+
+    worker
+        .join()
+        .unwrap_or_else(|_| Err(CliError::Message("CLI worker thread panicked".into())))
+}
+
+#[cfg(not(windows))]
+fn run_with_platform_stack() -> Result<(), CliError> {
+    run()
+}
+
 fn main() {
-    if let Err(error) = run() {
+    if let Err(error) = run_with_platform_stack() {
         eprintln!("error: {error}");
         std::process::exit(1);
     }
