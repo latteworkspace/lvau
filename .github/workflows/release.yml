@@ -182,7 +182,7 @@ jobs:
           while IFS= read -r bom; do
             crate="$(basename "$(dirname "$bom")")"
             cp "$bom" "artifacts/sbom/${crate}.cdx.json"
-          done < <(find crates -name bom.json -type f -print)
+          done < <(find crates -name '*.cdx.json' -type f -print)
           test -n "$(find artifacts/sbom -name '*.cdx.json' -print -quit)"
       - name: Generate checksums
         shell: bash
