@@ -2,7 +2,7 @@
 
 > ローカルファイルと開発者ワークフロー向けの、検査可能な暗号化カプセル。
 
-Lvau は CLI、ネイティブ GUI、暗号ライブラリ、バージョン付き `.lvau` プロトコル、実験的な自己展開 stub からなる Rust workspace です。現在のソースツリーは **0.4.0** の準備版です。この作業では tag や Release を作成していません。
+Lvau は CLI、ネイティブ GUI、暗号ライブラリ、バージョン付き `.lvau` プロトコル、実験的な自己展開 stub からなる Rust workspace です。現在のリリースは **0.4.0** です。
 
 [English](README.md) | 日本語
 
@@ -31,7 +31,7 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 
 Windows では、Lvau を実行するアカウントだけが読める ACL を設定してください。Windows のパスワードファイル ACL は自動検証しません。パスワードや seed ファイルを commit しないでください。
 
-## 0.4.0 リリース候補の変更
+## 0.4.0 の変更
 
 - 新規ファイルは envelope 形式 v2 を使用します。AEAD の認証対象に平文長、nonce、受信者/KDF header、公開 label、content type、private metadata bytes、policy override marker を含めます。
 - 空ペイロードにも認証済み AEAD frame を保存し、復号時に余分な暗号文を拒否します。

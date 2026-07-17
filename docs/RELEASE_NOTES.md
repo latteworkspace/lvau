@@ -1,4 +1,4 @@
-# Lvau 0.4.0 Release Notes (Candidate)
+# Lvau 0.4.0 Release Notes
 
 Lvau 0.4.0 is a security-focused minor release. It keeps the existing CLI and legacy read paths while making new capsules use envelope format v2. A patch release was not appropriate because old Lvau binaries cannot read the new output format and callers need explicit migration guidance.
 
