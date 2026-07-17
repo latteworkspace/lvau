@@ -616,7 +616,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5106bf2680d585dc5f29711b8aa5dde353180b8e14af89b7f0424f760c84e7ce"
 dependencies = [
  "hashbrown 0.15.5",
- "rand 0.8.6",
+ "rand 0.8.7",
  "zeroize",
 ]
 
@@ -2515,7 +2515,7 @@ dependencies = [
  "lvau-protocol",
  "ml-kem",
  "postcard",
- "rand 0.8.6",
+ "rand 0.9.4",
  "rand_core 0.6.4",
  "rayon",
  "secrecy",
@@ -2551,7 +2551,7 @@ dependencies = [
 name = "lvau-protocol"
 version = "0.4.0"
 dependencies = [
- "rand 0.8.6",
+ "rand 0.9.4",
  "rand_core 0.6.4",
  "serde",
  "zeroize",
@@ -3440,9 +3440,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.6"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -5268,7 +5268,7 @@ dependencies = [
  "hex",
  "nix",
  "ordered-stream",
- "rand 0.8.6",
+ "rand 0.8.7",
  "serde",
  "serde_repr",
  "sha1",
