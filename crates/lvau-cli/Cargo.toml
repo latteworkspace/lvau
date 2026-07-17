@@ -1,6 +1,6 @@
 [package]
 name = "lvau-cli"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 publish = false
 
@@ -18,7 +18,7 @@ tempfile = "3.10"
 toml = "0.8"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-postcard = { version = "1.0", features = ["alloc"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"

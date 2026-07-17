@@ -34,7 +34,7 @@ Lvau is now easier to integrate into scripts and automated workflows. Use the `-
 - Explicitly documented that Lvau uses standard cryptography and that `extreme` profile LCO is an obfuscation layer, not a cryptographic boundary.
 
 ## Migration Guide
-- v0.3.0 is **fully backwards compatible** with v0.2.x envelopes.
+- v0.3.0 retains reader compatibility with supported v0.2.x envelopes.
 - However, v0.2.x cannot decrypt v0.3.0 bundle envelopes or recognize signature fields. We recommend all users upgrade to v0.3.0.
 
 *Download the latest binaries below for Windows, macOS, and Linux.*

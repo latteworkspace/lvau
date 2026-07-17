@@ -1,6 +1,7 @@
 use super::keys::generate_keypair;
 use super::parallel::CHUNK_SIZE;
 use super::*;
+use base64::Engine;
 use lvau_protocol::envelope::Envelope;
 use secrecy::Secret;
 use sha2::{Digest, Sha256};
@@ -202,6 +203,174 @@ fn truncated_file_fails() {
 }
 
 #[test]
+fn empty_password_cannot_create_a_capsule() {
+    let input = unique_path("empty-password.input");
+    let enc = unique_path("empty-password.lvau");
+    fs::write(&input, b"not protected by an empty password").unwrap();
+
+    let result = encrypt_file_password(
+        &input,
+        &enc,
+        Secret::new(String::new()),
+        None,
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    );
+
+    assert!(matches!(result, Err(CryptoError::Validation(_))));
+    assert!(!enc.exists());
+}
+
+#[test]
+fn failed_decryption_removes_partial_plaintext_tempfile() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.bin");
+    let enc = dir.path().join("encrypted.lvau");
+    let output = dir.path().join("output.bin");
+    let password = Secret::new("password123".to_string());
+
+    fs::write(&input, b"data that will fail authentication").unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    let mut data = fs::read(&enc).unwrap();
+    *data.last_mut().unwrap() ^= 0x80;
+    fs::write(&enc, data).unwrap();
+
+    assert!(decrypt_file_password(&enc, &output, password, None, None).is_err());
+    let leftovers: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".output.bin.") && name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "leftover plaintext files: {leftovers:?}"
+    );
+}
+
+#[test]
+fn declared_length_cannot_authenticate_a_valid_ciphertext_prefix() {
+    let input = unique_path("declared-length-prefix.input");
+    let enc = unique_path("declared-length-prefix.lvau");
+    let dec = unique_path("declared-length-prefix.output");
+    let password = Secret::new("password123".to_string());
+    let bytes: Vec<u8> = (0..(CHUNK_SIZE * 2 + 17))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    fs::write(&input, bytes).unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    let data = fs::read(&enc).unwrap();
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
+    envelope.plaintext_len = CHUNK_SIZE as u64;
+
+    let new_envelope = postcard::to_allocvec(&envelope).unwrap();
+    let first_ciphertext_chunk_len = CHUNK_SIZE + 16;
+    let ciphertext_start = 4 + env_len;
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&(new_envelope.len() as u32).to_le_bytes());
+    forged.extend_from_slice(&new_envelope);
+    forged
+        .extend_from_slice(&data[ciphertext_start..ciphertext_start + first_ciphertext_chunk_len]);
+    fs::write(&enc, forged).unwrap();
+
+    let result = decrypt_file_password(&enc, &dec, password, None, None);
+    assert!(result.is_err(), "a valid ciphertext prefix was accepted");
+}
+
+#[test]
+fn empty_payload_still_authenticates_immutable_envelope_fields() {
+    let input = unique_path("empty-envelope.input");
+    let enc = unique_path("empty-envelope.lvau");
+    let dec = unique_path("empty-envelope.output");
+    let password = Secret::new("password123".to_string());
+
+    fs::write(&input, []).unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    let data = fs::read(&enc).unwrap();
+    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
+    envelope.content_type = Some(lvau_protocol::envelope::ContentType::Bundle);
+
+    let new_envelope = postcard::to_allocvec(&envelope).unwrap();
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&(new_envelope.len() as u32).to_le_bytes());
+    forged.extend_from_slice(&new_envelope);
+    forged.extend_from_slice(&data[4 + env_len..]);
+    fs::write(&enc, forged).unwrap();
+
+    let result = decrypt_file_password(&enc, &dec, password, None, None);
+    assert!(
+        result.is_err(),
+        "empty payload metadata mutation was accepted"
+    );
+}
+
+#[test]
+fn trailing_ciphertext_is_rejected() {
+    let input = unique_path("trailing-ciphertext.input");
+    let enc = unique_path("trailing-ciphertext.lvau");
+    let dec = unique_path("trailing-ciphertext.output");
+    let password = Secret::new("password123".to_string());
+
+    fs::write(&input, b"authenticated payload").unwrap();
+    encrypt_file_password(
+        &input,
+        &enc,
+        password.clone(),
+        None,
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    let mut data = fs::read(&enc).unwrap();
+    data.extend_from_slice(b"unauthenticated suffix");
+    fs::write(&enc, data).unwrap();
+
+    let result = decrypt_file_password(&enc, &dec, password, None, None);
+    assert!(result.is_err(), "trailing ciphertext was ignored");
+}
+
+#[test]
 fn random_garbage_input_fails_gracefully() {
     let enc = unique_path("garbage.lvau");
     let dec = unique_path("garbage.output");
@@ -242,6 +411,140 @@ fn inspect_works_without_password() {
     assert_eq!(header.version, CURRENT_VERSION);
     assert_eq!(header.profile, SecurityProfile::Fast);
     assert_eq!(header.recipients.len(), 1);
+}
+
+#[derive(serde::Serialize)]
+struct V021EnvelopeFixture {
+    header: EnvelopeHeader,
+    plaintext_len: u64,
+    nonce: [u8; 24],
+    secondary_nonce: Option<[u8; 12]>,
+    aad_hash: [u8; 32],
+    metadata: Vec<u8>,
+}
+
+#[test]
+fn v021_six_field_envelope_is_decoded_explicitly() {
+    let header = EnvelopeHeader {
+        magic: MAGIC_REAL,
+        version: LEGACY_VERSION,
+        profile: SecurityProfile::Fast,
+        algorithm: AlgorithmId::XChaCha20Poly1305,
+        kdf: Some(KdfParams::Argon2id {
+            m_cost: 16_384,
+            t_cost: 1,
+            p_cost: 1,
+            salt: [7; 16],
+        }),
+        recipients: vec![Recipient::Password {
+            nonce: [3; 24],
+            encrypted_file_key: vec![5; 48],
+        }],
+    };
+    let header_bytes = postcard::to_allocvec(&header).unwrap();
+    let fixture = V021EnvelopeFixture {
+        header,
+        plaintext_len: 42,
+        nonce: [11; 24],
+        secondary_nonce: None,
+        aad_hash: Sha256::digest(header_bytes).into(),
+        metadata: vec![1, 2, 3],
+    };
+
+    let bytes = postcard::to_allocvec(&fixture).unwrap();
+    let decoded = decode_envelope_bytes(&bytes).unwrap();
+
+    assert_eq!(decoded.header.version, LEGACY_VERSION);
+    assert_eq!(decoded.plaintext_len, 42);
+    assert_eq!(decoded.content_type, None);
+    assert!(decoded.approvals.is_empty());
+}
+
+#[test]
+fn v030_release_binary_fixture_decrypts() {
+    let encoded: String = include_str!("../../tests/fixtures/v0_3_password.lvau.b64")
+        .split_whitespace()
+        .collect();
+    let fixture = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .unwrap();
+    let encrypted = unique_path("v0.3.0-fixture.lvau");
+    let decrypted = unique_path("v0.3.0-fixture.output");
+    fs::write(&encrypted, fixture).unwrap();
+
+    decrypt_file_password(
+        &encrypted,
+        &decrypted,
+        Secret::new("synthetic-v0.3-fixture-password".to_string()),
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read(&decrypted).unwrap(),
+        "Lvau v0.3.0 compatibility fixture\nUTF-8: 日本語\n".as_bytes()
+    );
+}
+
+#[test]
+fn envelope_decoder_rejects_noncanonical_trailing_bytes() {
+    let header = EnvelopeHeader {
+        magic: MAGIC_REAL,
+        version: LEGACY_VERSION,
+        profile: SecurityProfile::Fast,
+        algorithm: AlgorithmId::XChaCha20Poly1305,
+        kdf: None,
+        recipients: Vec::new(),
+    };
+    let header_bytes = postcard::to_allocvec(&header).unwrap();
+    let fixture = V021EnvelopeFixture {
+        header,
+        plaintext_len: 0,
+        nonce: [0; 24],
+        secondary_nonce: None,
+        aad_hash: Sha256::digest(header_bytes).into(),
+        metadata: Vec::new(),
+    };
+    let mut bytes = postcard::to_allocvec(&fixture).unwrap();
+    bytes.push(0);
+
+    assert!(decode_envelope_bytes(&bytes).is_err());
+}
+
+#[test]
+fn envelope_decoder_rejects_attacker_selected_argon2_costs() {
+    let header = EnvelopeHeader {
+        magic: MAGIC_REAL,
+        version: LEGACY_VERSION,
+        profile: SecurityProfile::Fast,
+        algorithm: AlgorithmId::XChaCha20Poly1305,
+        kdf: Some(KdfParams::Argon2id {
+            m_cost: u32::MAX,
+            t_cost: u32::MAX,
+            p_cost: 1,
+            salt: [7; 16],
+        }),
+        recipients: vec![Recipient::Password {
+            nonce: [3; 24],
+            encrypted_file_key: vec![5; 48],
+        }],
+    };
+    let header_bytes = postcard::to_allocvec(&header).unwrap();
+    let fixture = V021EnvelopeFixture {
+        header,
+        plaintext_len: 42,
+        nonce: [11; 24],
+        secondary_nonce: None,
+        aad_hash: Sha256::digest(header_bytes).into(),
+        metadata: Vec::new(),
+    };
+
+    let bytes = postcard::to_allocvec(&fixture).unwrap();
+    assert!(matches!(
+        decode_envelope_bytes(&bytes),
+        Err(CryptoError::Validation(_))
+    ));
 }
 
 #[test]
@@ -302,6 +605,46 @@ fn hybrid_keypair_roundtrips() {
     decrypt_file_keypair(&enc, &dec, &private_key, None).unwrap();
 
     assert_eq!(fs::read(&dec).unwrap(), b"hybrid recipient data");
+}
+
+#[test]
+fn empty_keypair_recipient_set_is_rejected() {
+    let input = unique_path("empty-recipient.input");
+    let enc = unique_path("empty-recipient.lvau");
+    fs::write(&input, b"must remain recoverable").unwrap();
+
+    let result = encrypt_file_keypairs(&input, &enc, &[], SecurityProfile::Fast, None, None, false);
+
+    assert!(matches!(result, Err(CryptoError::Validation(_))));
+    assert!(!enc.exists());
+}
+
+#[test]
+fn every_keypair_recipient_can_verify_and_decrypt_in_memory() {
+    let input = unique_path("second-recipient.input");
+    let enc = unique_path("second-recipient.lvau");
+    let (_private_one, public_one) = generate_keypair();
+    let (private_two, public_two) = generate_keypair();
+    let plaintext = b"the second recipient is equally authorized";
+    fs::write(&input, plaintext).unwrap();
+
+    encrypt_file_keypairs(
+        &input,
+        &enc,
+        &[public_one, public_two],
+        SecurityProfile::Fast,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    verify_file_keypair(&enc, &private_two, None).unwrap();
+    let encoded = fs::read(&enc).unwrap();
+    assert_eq!(
+        decrypt_memory_keypair(&encoded, &private_two).unwrap(),
+        plaintext
+    );
 }
 
 #[test]

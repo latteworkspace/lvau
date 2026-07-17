@@ -1,10 +1,21 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn lvau() -> Command {
     Command::cargo_bin("lvau-cli").unwrap()
+}
+
+fn write_secret_file(path: &Path, contents: &str) {
+    fs::write(path, contents).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }
 
 #[test]
@@ -41,7 +52,7 @@ fn password_roundtrip_and_inspect_work() {
     let password = dir.path().join("password.txt");
 
     fs::write(&input, "hello from lvau").unwrap();
-    fs::write(&password, "correct horse battery staple\n").unwrap();
+    write_secret_file(&password, "correct horse battery staple\n");
 
     lvau()
         .args([
@@ -89,7 +100,7 @@ fn inspect_json_output_is_valid() {
     let password = dir.path().join("password.txt");
 
     fs::write(&input, "json test").unwrap();
-    fs::write(&password, "testpass\n").unwrap();
+    write_secret_file(&password, "testpass\n");
 
     lvau()
         .args([
@@ -135,8 +146,8 @@ fn wrong_password_fails_without_output() {
     let wrong_password = dir.path().join("wrong-password.txt");
 
     fs::write(&input, "secret").unwrap();
-    fs::write(&password, "correct\n").unwrap();
-    fs::write(&wrong_password, "wrong\n").unwrap();
+    write_secret_file(&password, "correct\n");
+    write_secret_file(&wrong_password, "wrong\n");
 
     lvau()
         .args([
@@ -178,7 +189,7 @@ fn corrupted_file_fails_gracefully() {
     let password = dir.path().join("password.txt");
 
     fs::write(&encrypted, "not an envelope").unwrap();
-    fs::write(&password, "correct\n").unwrap();
+    write_secret_file(&password, "correct\n");
 
     lvau()
         .args([
@@ -204,7 +215,7 @@ fn refuses_overwrite_without_force() {
 
     fs::write(&input, "secret").unwrap();
     fs::write(&encrypted, "existing").unwrap();
-    fs::write(&password, "correct\n").unwrap();
+    write_secret_file(&password, "correct\n");
 
     lvau()
         .args([
@@ -359,7 +370,7 @@ fn bundle_policy_diff_lifecycle() {
     fs::create_dir_all(&key_dir).unwrap();
     fs::write(src.join("file1.txt"), "hello world").unwrap();
     fs::write(src.join("file2.txt"), "secret data").unwrap();
-    fs::write(&password, "super_secure_password\n").unwrap();
+    write_secret_file(&password, "super_secure_password\n");
 
     // Generate keys
     lvau()

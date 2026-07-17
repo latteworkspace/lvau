@@ -15,7 +15,9 @@ pub fn apply_lco(data: &mut [u8], key: &[u8; 32], nonce: &[u8]) {
     let mut j: u8 = 0;
     for i in 0..256 {
         let key_byte = key[i % 32];
-        let nonce_byte = nonce[i % nonce.len()];
+        // Callers currently use a 24-byte nonce, but this helper is public and
+        // must not panic if a malformed or future caller supplies an empty one.
+        let nonce_byte = nonce.get(i % nonce.len().max(1)).copied().unwrap_or(0);
         // Custom non-linear mixing
         let mix = key_byte
             .wrapping_add(nonce_byte)
@@ -40,5 +42,23 @@ pub fn apply_lco(data: &mut [u8], key: &[u8; 32], nonce: &[u8]) {
         let obfuscated_byte = keystream_byte.rotate_right(rot);
 
         *byte ^= obfuscated_byte;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_lco;
+
+    #[test]
+    fn empty_nonce_does_not_panic_and_remains_reversible() {
+        let key = [7_u8; 32];
+        let mut data = b"payload".to_vec();
+        let original = data.clone();
+
+        apply_lco(&mut data, &key, &[]);
+        assert_ne!(data, original);
+        apply_lco(&mut data, &key, &[]);
+
+        assert_eq!(data, original);
     }
 }

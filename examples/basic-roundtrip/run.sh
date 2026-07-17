@@ -8,6 +8,7 @@ BIN="${LVAU_CLI:-lvau-cli}"
 
 printf '%s\n' 'Hello, Lvau! This file should survive encryption and decryption.' > "$WORKDIR/sample.txt"
 printf '%s\n' 'correct horse battery staple' > "$WORKDIR/password.txt"
+chmod 600 "$WORKDIR/password.txt"
 
 "$BIN" encrypt \
   --in-file "$WORKDIR/sample.txt" \

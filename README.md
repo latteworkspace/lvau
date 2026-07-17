@@ -1,316 +1,222 @@
 # Lvau
 
-> Signed, policy-checked, recoverable encrypted capsules for local files and developer workflows.
+> Inspectable encrypted capsules for local files and developer workflows.
 
-Lvau is a Rust-based encrypted capsule toolkit. A Lvau capsule is not just an encrypted file; it can contain an encrypted payload, encrypted private manifest, minimal public metadata, author signature, recipient slots, recovery policy, artifact policy, verification status, and release metadata.
+Lvau is a Rust workspace containing a CLI, native GUI, crypto library, versioned `.lvau` protocol, and an experimental self-extracting stub. The current release is **0.4.0**.
 
-English | [Japanese](README_ja.md)
+English | [日本語](README_ja.md)
 
-[![CI](https://github.com/lasder-ca/lvau/actions/workflows/ci.yml/badge.svg)](https://github.com/lasder-ca/lvau/actions/workflows/ci.yml)
+[![CI](https://github.com/latteworkspace/lvau/actions/workflows/ci.yml/badge.svg)](https://github.com/latteworkspace/lvau/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **⚠️ Not audited.** Lvau has not been formally audited by a third-party security firm. See [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+> **Security warning:** Lvau has not completed a formal independent security audit, and the format is not stable before 1.0. Read [SECURITY.md](SECURITY.md) and [the threat model](docs/THREAT_MODEL.md) before using it for important data.
 
-## Quick Demo
+## Quick start
+
+Interactive password entry is hidden and written to the terminal, not stdout:
 
 ```sh
-lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password
+lvau-cli encrypt --password --in-file secret.txt --out-file secret.txt.lvau
 lvau-cli inspect --in-file secret.txt.lvau
-lvau-cli decrypt --in-file secret.txt.lvau --out-file secret.restored.txt --password
+lvau-cli decrypt --password --in-file secret.txt.lvau --out-file secret.restored.txt
 ```
 
-For automated scripts and tests, use a local password file instead of putting a password in shell history:
+For non-interactive local automation, use a restricted password file. Lvau removes trailing CR/LF characters but preserves all other bytes. Unix password/seed files must not be accessible by group or other users.
 
 ```sh
+printf '%s' 'replace-with-a-strong-passphrase' > password.txt
+chmod 600 password.txt
 lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file password.txt
 ```
 
-## What Makes Lvau Different?
+On Windows, restrict the file ACL to the account running Lvau. Password-file ACLs are not automatically validated there. Never commit password or seed files.
 
-Lvau is not trying to replace age, VeraCrypt, Cryptomator, or SOPS. Each tool excels at a specific use case. 
+## 0.4.0 changes
 
-**Honest assessment:**
-- **age** is excellent for simple file encryption.
-- **VeraCrypt** is excellent for disk/container encryption.
-- **Cryptomator** is excellent for cloud-synced vaults.
-- **SOPS** is excellent for structured secrets.
-- **Lvau** focuses on Rust, inspectable envelopes, signed encrypted artifacts, sealed bundles, recovery workflows, CLI-first automation, and local developer workflows.
+- New files use envelope format v2. The AEAD commitment now includes the declared plaintext length, nonces, recipients/KDF header, public label, content type, private metadata bytes, and policy-override marker.
+- Empty payloads contain an authenticated AEAD frame, and decryptors reject trailing ciphertext.
+- Readers retain format-v1 and legacy v0.2 envelope compatibility through a bounded, exact parser. Legacy format-v1 length and non-header metadata were not payload-authenticated; decrypt and re-encrypt old capsules to migrate them to v2.
+- Envelope size, recipient count/type, wrapped-key sizes, nonce layout, and exact Argon2id profile tuples are validated before expensive work.
+- Author signatures and approval seals commit to their fingerprints and comments; v2 approval seals also commit to the ciphertext. They still require explicit trusted-key verification.
+- Bundle manifests now receive canonical decoding, checked offsets, overlap/path/collision validation, and per-entry BLAKE3 verification.
+- Bundle packing rejects special files; extraction will not overwrite symlink/reparse-point or multi-hardlink targets, even with `--force`.
+- Recovery shares no longer publish `SHA-256(secret)` as a set identifier and use the corrected `blahaj` Shamir implementation.
+- Sensitive outputs use same-directory temporary files, fsync, restrictive Unix modes, and atomic replacement where the platform supports it.
+- GUI crypto runs on a background worker with processed-byte status; password/seed fields are cleared after dispatch, and experimental SFX assembly streams into an atomic temporary output.
+- CI validates Linux, Windows, and macOS, pins Actions by commit, checks release tags against every workspace crate, and prepares checksums, CycloneDX SBOMs, and GitHub artifact attestations.
 
-### Comparison
+See [CHANGELOG.md](CHANGELOG.md) and [the generic release notes](docs/RELEASE_NOTES.md) for the complete candidate summary.
 
-| Feature | Lvau | age | VeraCrypt | Cryptomator | SOPS |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| File encryption | ✅ | ✅ | — | — | — |
-| Directory bundles | ✅ | — | — | ✅ | — |
-| Disk/container encryption | — | — | ✅ | — | — |
-| Cloud vault sync | — | — | — | ✅ | — |
-| Structured secrets | ✅ | — | — | — | ✅ |
-| Capsule policy & recovery | ✅ | — | — | — | — |
-| Signed artifacts & Approvals | ✅ | — | — | — | ✅ |
-| CLI automation | ✅ | ✅ | limited | — | ✅ |
-| GUI | ✅ | — | ✅ | ✅ | — |
-| Formally audited | **no** | **yes** | **yes** | **yes** | varies |
-| Implementation | Rust | Go | C++ | Java | Go |
+## Supported and experimental features
 
-## Features
+Stable-enough-to-test paths:
 
-- XChaCha20-Poly1305 AEAD for the default password encryption path.
-- Argon2id password KDF with `fast`, `balanced`, `archive`, `paranoid`, and `extreme` profiles.
-- HKDF-SHA256 key separation.
-- Versioned `.lvau` envelope with magic bytes, version, public KDF metadata, nonces, authenticated header hash, and plaintext length.
-- Parallel 1 MiB chunk encryption via Rayon.
-- Hidden password prompts in the CLI, plus `--password-file` for non-interactive automation.
-- Refuses to overwrite output unless `--force` is provided.
-- Atomic output writes (write to temp file, fsync, rename).
-- `--json` output for inspect and verify commands.
-- Native GUI via `egui`.
+- Password encryption with XChaCha20-Poly1305, Argon2id, and HKDF-SHA256.
+- Streaming 1 MiB chunks without loading a whole ordinary file into memory.
+- Public inspection, authenticated decrypt/verify, JSON inspect/verify/preflight output, and overwrite refusal unless `--force` is supplied.
+- Ed25519 author signatures.
+- Password-encrypted directory bundles with an encrypted manifest.
+- Local capsule-policy linting, preflight reports, recipient-group files, recovery shares, and structured-secret commands.
 
-### New in v0.3.0
+Experimental paths:
 
-- **Sealed bundle mode** — Pack a directory into one encrypted `.lvau` file with an authenticated manifest. Configurable metadata privacy and size padding.
-- **Signed provenance** — Sign encrypted artifacts with Ed25519. Verify authorship without the decryption password.
-- **Recovery shares** — Split keys or files into Shamir Secret Sharing recovery shards.
-- **Structured secrets** — Direct CLI commands (`lvau-cli secret`) to encrypt, decrypt, and edit `.env` or API keys securely in-place, integrated with local policies.
-- **Hardened tests** — Property roundtrip tests, corrupt envelope tests, path traversal tests, and more.
-- **`--json` output** — Machine-readable output for inspect and verify.
+- X25519 + ML-KEM-768 hybrid recipient encryption.
+- `paranoid` and `extreme` cascade profiles.
+- LCO in `extreme`; it is obfuscation, not a cryptographic security boundary.
+- Native GUI and Windows self-extracting archives.
+- Approval seals, release metadata, and recovery metadata as workflow annotations.
 
-## Experimental Features
-
-These are available, but should be treated as experimental in v0.3.0:
-
-- Hybrid keypair encryption using X25519 + ML-KEM-768.
-- Cascade profiles (`paranoid`, `extreme`).
-- The LCO layer used by `extreme`. LCO is an obfuscation layer, not a cryptographic security boundary.
-- Windows self-extracting archives (`--sfx`).
-
-## Security Warnings
-
-> **⚠️ Do not use weak passwords.** Argon2id slows brute-force attacks, but cannot protect passwords like `password123` or `1234`. Use a strong, unique passphrase of at least 4–5 random words, or a password manager-generated password of 16+ characters.
-
-> **⚠️ Not audited.** The cryptographic design uses standard, well-reviewed primitives, but the implementation has not been professionally reviewed. For sensitive production use, also evaluate age, VeraCrypt, Cryptomator, or similar audited tools.
+Policy and approval checks are advisory local controls. Their presence does **not** enforce decryption authorization, establish signer trust, or replace an external M-of-N authorization system. See [docs/APPROVALS.md](docs/APPROVALS.md) and [docs/CAPSULE_POLICY.md](docs/CAPSULE_POLICY.md).
 
 ## Install
 
-### Release Binaries
+Release archives are published at [GitHub Releases](https://github.com/latteworkspace/lvau/releases) only after an authorized tag workflow completes.
 
-Download archives from [GitHub Releases](https://github.com/lasder-ca/lvau/releases).
-
-| Platform | Asset |
+| Platform | Planned asset name |
 | --- | --- |
 | Linux x86_64 | `lvau-x86_64-unknown-linux-gnu.tar.gz` |
 | Windows x86_64 | `lvau-x86_64-pc-windows-msvc.zip` |
 | macOS x86_64 | `lvau-x86_64-apple-darwin.tar.gz` |
 | macOS aarch64 | `lvau-aarch64-apple-darwin.tar.gz` |
 
-Each archive contains `lvau-cli`, `lvau-gui`, `lvau-stub`, `README.md`, and `LICENSE` (`.exe` suffix on Windows). Verify downloads with the release `checksums.txt`.
+Verify an archive against `checksums.txt`, then verify its GitHub artifact attestation with GitHub CLI when available. Each archive contains `lvau-cli`, `lvau-gui`, `lvau-stub`, both READMEs, `SECURITY.md`, and `LICENSE` (`.exe` suffix on Windows).
 
-### Windows PowerShell
-
-```powershell
-# Download and extract to a directory in your PATH
-Invoke-WebRequest -Uri "https://github.com/lasder-ca/lvau/releases/latest/download/lvau-x86_64-pc-windows-msvc.zip" -OutFile lvau.zip
-Expand-Archive lvau.zip -DestinationPath "$env:LOCALAPPDATA\lvau"
-$env:PATH += ";$env:LOCALAPPDATA\lvau\lvau-x86_64-pc-windows-msvc"
-```
-
-### Linux Shell
+### Build from source
 
 ```sh
-curl -LO "https://github.com/lasder-ca/lvau/releases/latest/download/lvau-x86_64-unknown-linux-gnu.tar.gz"
-tar xzf lvau-x86_64-unknown-linux-gnu.tar.gz
-sudo cp lvau-x86_64-unknown-linux-gnu/lvau-cli /usr/local/bin/
-```
-
-### Build From Source
-
-```sh
-git clone https://github.com/lasder-ca/lvau.git
+git clone https://github.com/latteworkspace/lvau.git
 cd lvau
-cargo build --workspace --release
+cargo build --locked --workspace --release
 ```
 
 Binaries are written to `target/release/`.
 
-## CLI Usage
+### Windows Explorer context menu
+
+The existing helper can register a per-user `Lvau` context menu without administrator privileges. It decrypts `.lvau` files and encrypts other files, creates output beside the input, refuses to overwrite, and prompts for a password each time.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install-context-menu.ps1 `
+  -BinaryPath .\target\release\lvau-cli.exe
+```
+
+Remove it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall-context-menu.ps1
+```
+
+## CLI
+
+Run `lvau-cli <command> --help` for the authoritative options. Top-level commands are:
 
 ```text
-lvau-cli <COMMAND> [OPTIONS]
-
-Commands:
-  encrypt          Encrypt a file
-  decrypt          Decrypt a file
-  inspect          Inspect public envelope metadata
-  keygen           Generate an experimental hybrid keypair
-  verify           Verify file integrity without writing plaintext to disk
-  bundle           Pack, extract, inspect, or verify encrypted directory bundles
-  sign-keygen      Generate an Ed25519 signing keypair
-  sign             Sign an encrypted .lvau file
-  verify-signature Verify an Ed25519 signature on an .lvau file
-  self-test        Run built-in integration tests
-  doctor           Print environment diagnostics
+keygen  encrypt  decrypt  inspect  verify  preflight  report  policy
+bundle  sign-keygen  sign  verify-signature  approve  approvals
+release  recipients  recovery  secret  self-test  doctor
 ```
 
-### Encrypt with a password
+Common examples:
 
 ```sh
-lvau-cli encrypt --in-file document.pdf --out-file document.pdf.lvau --password
-```
+# Password encryption and verification
+lvau-cli encrypt --password --in-file document.pdf --out-file document.pdf.lvau --profile balanced
+lvau-cli verify --password --in-file document.pdf.lvau --json
+lvau-cli decrypt --password --in-file document.pdf.lvau --out-file document.pdf
 
-### Decrypt with a password
+# Experimental hybrid recipient encryption
+lvau-cli keygen --out-base identity
+lvau-cli encrypt --in-file input.txt --out-file output.lvau --pub-key identity.lvau-pub
+lvau-cli decrypt --in-file output.lvau --out-file restored.txt --priv-key identity.lvau-key
 
-```sh
-lvau-cli decrypt --in-file document.pdf.lvau --out-file document.pdf --password
-```
-
-### Inspect without decrypting
-
-```sh
-lvau-cli inspect --in-file document.pdf.lvau
-lvau-cli inspect --in-file document.pdf.lvau --json
-```
-
-### Verify integrity without decrypting to disk
-
-```sh
-lvau-cli verify --in-file document.pdf.lvau --password
-```
-
-### Choose a profile
-
-```sh
-lvau-cli encrypt --in-file data.bin --out-file data.bin.lvau --password --profile archive
-```
-
-| Profile | Argon2id memory | Intended use |
-| --- | ---: | --- |
-| `fast` | 16 MiB | Tests and quick local operations |
-| `balanced` | 64 MiB | Default general use |
-| `archive` | 256 MiB | Slower archival encryption |
-| `paranoid` | 1 GiB | Experimental cascade profile |
-| `extreme` | 1 GiB | Experimental cascade plus LCO obfuscation |
-
-### Generate and use an experimental hybrid keypair
-
-```sh
-lvau-cli keygen --out-base my-identity
-lvau-cli encrypt --in-file input.txt --out-file output.lvau --pub-key my-identity.lvau-pub
-lvau-cli decrypt --in-file output.lvau --out-file input.restored.txt --priv-key my-identity.lvau-key
-```
-
-### Bundle a directory
-
-```sh
-lvau-cli bundle pack --in-dir ./project-secrets/ --out-file secrets.lvau --password
+# Password bundle
+lvau-cli bundle pack --password --in-dir ./project-secrets --out-file secrets.lvau
 lvau-cli bundle inspect --in-file secrets.lvau
-lvau-cli bundle list --in-file secrets.lvau --password
-lvau-cli bundle verify --in-file secrets.lvau --password
-lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password
-lvau-cli bundle extract --in-file secrets.lvau --out-dir ./restored/ --password --dry-run
-```
+lvau-cli bundle list --password --in-file secrets.lvau
+lvau-cli bundle verify --password --in-file secrets.lvau
+lvau-cli bundle extract --password --in-file secrets.lvau --out-dir ./restored --dry-run
+lvau-cli bundle extract --password --in-file secrets.lvau --out-dir ./restored
 
-### Sign and verify
-
-```sh
+# Signature
 lvau-cli sign-keygen --out-base maintainer
-lvau-cli sign --in-file release.lvau --signing-key maintainer.lvau-sign --out-file release-signed.lvau
-lvau-cli verify-signature --in-file release-signed.lvau --verify-key maintainer.lvau-verify
+lvau-cli sign --in-file secrets.lvau --out-file secrets-signed.lvau --signing-key maintainer.lvau-sign
+lvau-cli verify-signature --in-file secrets-signed.lvau --verify-key maintainer.lvau-verify
 ```
 
-### Recovery Shares
+Bundle list/extract/verify currently accept password credentials; hybrid bundle extraction is not exposed by the CLI.
 
-Split a master key into Shamir shares for secure offline recovery:
+### Security profiles
+
+| Profile | Argon2id parameters | Payload path | Status |
+| --- | --- | --- | --- |
+| `fast` | 16 MiB, 1 iteration, 1 lane | XChaCha20-Poly1305 | Intended for tests/quick local work |
+| `balanced` | 64 MiB, 2 iterations, 1 lane | XChaCha20-Poly1305 | Default |
+| `archive` | 256 MiB, 3 iterations, 2 lanes | XChaCha20-Poly1305 | Slower archival use |
+| `paranoid` | 1 GiB, 4 iterations, 4 lanes | AES-GCM + XChaCha cascade | Experimental |
+| `extreme` | 1 GiB, 4 iterations, 4 lanes | Cascade + LCO | Experimental |
+
+### Recovery shares
+
+Recovery operates on a file such as a private key. Protect every share as sensitive material.
 
 ```sh
-lvau-cli recovery split --in-key my-identity.lvau-key --shares 5 --threshold 3 --out-dir ./shares/
-lvau-cli recovery inspect --share ./shares/share-1.lvau-share
-lvau-cli recovery combine --shares-dir ./shares/ --out-key restored.lvau-key
+lvau-cli recovery split --in-file identity.lvau-key --shares 5 --threshold 3 --out-dir ./shares
+lvau-cli recovery inspect --in-file ./shares/share-1.lvau-share
+lvau-cli recovery combine --shares-dir ./shares --out-file restored.lvau-key
 ```
 
-### Rekey / Recipient Slots
+### Structured secrets
 
-Wrap the data encryption key for multiple recipients without full re-encryption:
+These commands choose output names automatically and prompt interactively. `secret print` intentionally writes plaintext to stdout, so do not use it where logs capture output.
 
 ```sh
-lvau-cli rekey add-recipient --in-file secrets.lvau --out-file secrets-shared.lvau --pub-key alice.lvau-pub
-lvau-cli rekey list-recipients --in-file secrets-shared.lvau
-lvau-cli rekey remove-recipient --in-file secrets-shared.lvau --out-file secrets-revoked.lvau --recipient 0xABC123
+lvau-cli secret encrypt --in-file .env
+lvau-cli secret edit --in-file .env.lvau
+lvau-cli secret print --in-file .env.lvau
+lvau-cli secret decrypt --in-file .env.lvau
 ```
-
-### Structured Secret Mode
-
-Lightweight developer workflows for dotfiles and configuration:
-
-```sh
-lvau-cli secret encrypt --in-file .env --out-file .env.lvau --format dotenv --password
-lvau-cli secret edit --in-file .env.lvau --password
-lvau-cli secret print --in-file .env.lvau --password --redact
-lvau-cli secret decrypt --in-file .env.lvau --out-file .env --password
-```
-
-Use `--force` to replace existing output files. Without `--force`, Lvau refuses to overwrite.
 
 ## GUI
 
-`lvau-gui` provides file selection, password or keypair mode, profile selection, status output, and logs. It is useful for local manual workflows, but CLI reliability is the primary focus.
+`lvau-gui` uses `lvau-core` rather than reimplementing crypto. It is an experimental interface for local file encryption/decryption and hybrid key generation; it does not yet expose every CLI workflow.
 
 ```sh
-cargo run --release --package lvau-gui
+cargo run --locked --release --package lvau-gui
 ```
 
-## Security Model
+## Security and format limits
 
-Lvau is designed for local file encryption at rest. It protects file contents when an attacker obtains the encrypted `.lvau` file but does not know the password or hold the private key.
+Lvau protects payload confidentiality and integrity when passwords/private keys and the local machine remain secure. It does not protect against malware, keyloggers, a compromised OS, weak passwords, stolen keys, malicious output consumers, or loss of all credentials.
 
-Lvau does not hide file names, exact filesystem metadata, or approximate plaintext size. It does not protect against malware, keyloggers, compromised operating systems, weak passwords, or stolen private keys.
+The envelope exposes algorithms, KDF parameters, recipient slots, nonces, approximate plaintext size, and optional public labels. Bundle paths and file metadata are inside the encrypted payload by default. Signature, approval, release, and recovery fields are mutable annotations and must be verified/interpreted separately.
 
-Lvau has not been formally audited. For sensitive production use, also evaluate established tools such as age, VeraCrypt, Cryptomator, or rclone crypt.
-
-Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on Lvau.
-
-## File Format
-
-Lvau uses a streaming architecture for large file support. `.lvau` files consist of:
-
-- 4-byte envelope length prefix (little-endian)
-- postcard-serialized envelope (magic bytes, version, metadata, nonces, authenticated AAD hash, total plaintext length)
-- Encrypted ciphertext chunks (1 MiB default size)
-
-The `.lvau` format is not stable before v1.0. See [docs/FORMAT.md](docs/FORMAT.md).
+The on-disk layout is a 4-byte little-endian envelope length, a bounded postcard envelope, and authenticated ciphertext chunks. See [docs/FORMAT.md](docs/FORMAT.md) for v2/v1 details and migration guidance.
 
 ## Architecture
 
-| Crate | Purpose |
+| Crate | Responsibility |
 | --- | --- |
-| `lvau-protocol` | Envelope types and serialization |
-| `lvau-core` | Crypto engine, KDF, key management, bundle, signing |
-| `lvau-cli` | Command-line interface |
-| `lvau-gui` | Native GUI |
-| `lvau-stub` | Experimental SFX extractor stub |
+| `lvau-protocol` | Serialized envelope and manifest data types |
+| `lvau-core` | Crypto, parsing, files, bundles, signing, policy, and recovery |
+| `lvau-cli` | Command-line UX and automation output |
+| `lvau-gui` | Experimental native GUI over `lvau-core` |
+| `lvau-stub` | Experimental SFX extractor |
 
-## Roadmap
-
-| Version | Theme | Key Features |
-| --- | --- | --- |
-| **v0.3.0** | Inspectable, signed, sealed | Bundle mode, Ed25519 signatures, hardened tests, docs overhaul |
-| **v0.4.0** | Policy-checked capsules | Capsule policy, preflight checks, approval seals, diffs, groups, metadata |
-| **v1.0** | Stable format | Format freeze, formal audit goal, stable API |
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for details.
+The public website is maintained in the adjacent `lattes.jp` repository. The OCI-hosted server API is in the adjacent `lvau-api` repository; the Rust workspace itself contains no OCI SDK or direct OCI control-plane client.
 
 ## Development
 
+Use WSL2 with Ubuntu 26.04 for the documented local workflow:
+
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace --release
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+cargo build --locked --workspace --release
+cargo tree --duplicates
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Security Reporting
-
-Do not report sensitive security vulnerabilities as public GitHub issues. See [SECURITY.md](SECURITY.md).
+Read [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [docs/ROADMAP.md](docs/ROADMAP.md). Do not report sensitive vulnerabilities in public issues; use the process in [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -349,7 +349,7 @@ enum ReleaseAction {
         #[arg(long)]
         project_name: Option<String>,
 
-        /// Version string (e.g. v0.5.0)
+        /// Version string (e.g. v0.4.0)
         #[arg(long)]
         version: Option<String>,
 
@@ -483,7 +483,7 @@ enum BundleAction {
         #[arg(long, default_value = "balanced")]
         profile: String,
 
-        /// Allow packing symlinks (rejected by default).
+        /// Follow symlink targets and pack their bytes as regular files (rejected by default).
         #[arg(long, default_value_t = false)]
         allow_symlinks: bool,
 
@@ -587,7 +587,7 @@ enum BundleAction {
         #[arg(long)]
         password_file: Option<PathBuf>,
 
-        /// Allow extracting symlinks.
+        /// Legacy compatibility flag; manifests contain regular files and symlink targets are always rejected.
         #[arg(long, default_value_t = false)]
         allow_symlinks: bool,
 
@@ -724,12 +724,32 @@ impl From<lvau_core::signing::SigningError> for CliError {
 }
 
 fn prompt_password(prompt: &str) -> Result<String, CliError> {
-    print!("{prompt}");
-    io::stdout().flush()?;
+    eprint!("{prompt}");
+    io::stderr().flush()?;
     read_password().map_err(CliError::Io)
 }
 
 fn read_secret_file(path: &Path) -> Result<String, CliError> {
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(CliError::Message(format!(
+            "Secret file is not a regular file: {}",
+            path.display()
+        )));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(CliError::Message(format!(
+                "Secret file permissions are too broad: {} (use chmod 600)",
+                path.display()
+            )));
+        }
+    }
+
     let value = fs::read_to_string(path)?;
     Ok(value.trim_end_matches(['\r', '\n']).to_string())
 }
@@ -1087,12 +1107,7 @@ fn run() -> Result<(), CliError> {
         Commands::Inspect { in_file, json } => {
             ensure_input_file(&in_file)?;
 
-            // Read full envelope for content_type, signature, and label
-            let data = fs::read(&in_file)?;
-            let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-            let envelope: lvau_protocol::envelope::Envelope =
-                postcard::from_bytes(&data[4..4 + env_len])
-                    .map_err(|e| CliError::Message(format!("Envelope parse error: {e}")))?;
+            let envelope = lvau_core::crypto::read_envelope_from_path(&in_file)?;
 
             let header = &envelope.header;
             let sig_fingerprint = envelope
@@ -1250,7 +1265,13 @@ fn run() -> Result<(), CliError> {
             pb.finish_and_clear();
 
             if json {
-                println!("{{\"status\":\"ok\",\"file\":\"{}\"}}", in_file.display());
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "ok",
+                        "file": in_file,
+                    })
+                );
             } else {
                 println!("Verification successful: {}", in_file.display());
             }
@@ -1278,6 +1299,7 @@ fn run() -> Result<(), CliError> {
             };
 
             let res = lvau_core::preflight::run_preflight(&in_file, vkey.as_ref(), pol.as_ref());
+            let failed = matches!(res.status, lvau_core::preflight::PreflightStatus::Fail);
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&res).unwrap());
@@ -1344,10 +1366,9 @@ fn run() -> Result<(), CliError> {
                         println!("- [WARN]  {}", w);
                     }
                 }
-
-                if let lvau_core::preflight::PreflightStatus::Fail = res.status {
-                    std::process::exit(1)
-                }
+            }
+            if failed {
+                std::process::exit(1);
             }
         }
         Commands::Report {
@@ -1448,43 +1469,14 @@ fn run() -> Result<(), CliError> {
             } => {
                 let pol = lvau_core::policy::CapsulePolicy::load_from_file(&policy)
                     .map_err(|e| CliError::Message(format!("Failed to load policy: {e}")))?;
-                let (header, content_type, public_label) =
-                    lvau_core::bundle::inspect_bundle(&in_file)?;
-
-                // Construct a mock envelope for linting
-                let mut envelope = lvau_protocol::envelope::Envelope {
-                    header,
-                    plaintext_len: 0,
-                    nonce: [0; 24],
-                    secondary_nonce: None,
-                    aad_hash: [0; 32],
-                    metadata: vec![],
-                    content_type,
-                    signature: None,
-                    public_label,
-                    approvals: vec![],
-                    release_metadata: None,
-                    policy_overridden: false,
-                    recovery_metadata: None,
-                };
-
-                // Check if signed (a bit hacky since inspect_bundle doesn't return full envelope currently)
-                // Actually inspect_bundle doesn't return signatures. I will parse the raw envelope using bincode/postcard.
-                let data = fs::read(&in_file)?;
-                let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-                if data.len() >= 4 + env_len {
-                    if let Ok(real_env) = postcard::from_bytes::<lvau_protocol::envelope::Envelope>(
-                        &data[4..4 + env_len],
-                    ) {
-                        envelope = real_env;
-                    }
-                }
+                let envelope = lvau_core::crypto::read_envelope_from_path(&in_file)?;
 
                 let result = lvau_core::policy::lint_envelope(&envelope, &pol);
+                let valid = result.is_valid();
 
                 if json {
                     let json_val = serde_json::json!({
-                        "valid": result.is_valid(),
+                        "valid": valid,
                         "violations": result.violations.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>(),
                         "warnings": result.warnings.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>()
                     });
@@ -1506,6 +1498,9 @@ fn run() -> Result<(), CliError> {
                     for w in result.warnings {
                         println!("- [WARNING] {}: {}", w.rule, w.message);
                     }
+                }
+                if !valid {
+                    std::process::exit(1);
                 }
             }
             PolicyAction::Create { out_file, force } => {
@@ -2454,9 +2449,49 @@ fn run_self_test() -> Result<(), CliError> {
     }
 }
 
+#[cfg(windows)]
+fn run_with_platform_stack() -> Result<(), CliError> {
+    const WINDOWS_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+    let worker = std::thread::Builder::new()
+        .name("lvau-cli".to_string())
+        .stack_size(WINDOWS_STACK_SIZE)
+        .spawn(run)
+        .map_err(|error| CliError::Message(format!("Failed to start CLI worker: {error}")))?;
+
+    worker
+        .join()
+        .unwrap_or_else(|_| Err(CliError::Message("CLI worker thread panicked".into())))
+}
+
+#[cfg(not(windows))]
+fn run_with_platform_stack() -> Result<(), CliError> {
+    run()
+}
+
 fn main() {
-    if let Err(error) = run() {
+    if let Err(error) = run_with_platform_stack() {
         eprintln!("error: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_secret_file;
+
+    #[test]
+    #[cfg(unix)]
+    fn password_file_must_not_be_group_or_world_accessible() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("password.txt");
+        fs::write(&path, "secret\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let error = read_secret_file(&path).unwrap_err();
+        assert!(error.to_string().contains("permissions"));
     }
 }

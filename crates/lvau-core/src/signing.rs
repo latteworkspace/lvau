@@ -4,13 +4,66 @@
 //! Verification does not require the decryption password or private key.
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
-use lvau_protocol::envelope::{Envelope, EnvelopeSignature};
+use lvau_protocol::envelope::{ApprovalSignature, Envelope, EnvelopeSignature};
 use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 use thiserror::Error;
+
+const AUTHOR_SIGNATURE_V2_DOMAIN: &[u8] = b"Lvau author signature v2\0";
+const APPROVAL_SIGNATURE_V2_DOMAIN: &[u8] = b"Lvau approval signature v2\0";
+const APPROVAL_ARTIFACT_V2_DOMAIN: &[u8] = b"Lvau approval artifact v2\0";
+
+fn write_atomic(path: &Path, bytes: &[u8], force: bool) -> Result<(), SigningError> {
+    if path.exists() && !force {
+        return Err(SigningError::OutputExists(path.display().to_string()));
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp = NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+
+    #[cfg(windows)]
+    if force && path.exists() {
+        fs::remove_file(path)?;
+    }
+
+    if force {
+        temp.persist(path)
+            .map_err(|error| SigningError::Io(error.error))?;
+    } else {
+        temp.persist_noclobber(path)
+            .map_err(|error| SigningError::Io(error.error))?;
+    }
+
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn decode_capsule_parts(data: &[u8]) -> Result<(Envelope, &[u8]), SigningError> {
+    let length_bytes: [u8; 4] = data
+        .get(..4)
+        .ok_or(SigningError::InvalidEnvelope)?
+        .try_into()
+        .map_err(|_| SigningError::InvalidEnvelope)?;
+    let envelope_len = u32::from_le_bytes(length_bytes) as usize;
+    if envelope_len == 0 || envelope_len > crate::crypto::MAX_ENVELOPE_SIZE {
+        return Err(SigningError::InvalidEnvelope);
+    }
+    let envelope_end = 4usize
+        .checked_add(envelope_len)
+        .ok_or(SigningError::InvalidEnvelope)?;
+    let envelope_bytes = data
+        .get(4..envelope_end)
+        .ok_or(SigningError::InvalidEnvelope)?;
+    let envelope = crate::crypto::decode_envelope_bytes(envelope_bytes)
+        .map_err(|_| SigningError::InvalidEnvelope)?;
+    Ok((envelope, &data[envelope_end..]))
+}
 
 #[derive(Error, Debug)]
 pub enum SigningError {
@@ -58,6 +111,61 @@ pub fn key_fingerprint(verify_key: &VerifyingKey) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn author_signature_message(
+    envelope: &Envelope,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, SigningError> {
+    let mut statement = envelope.clone();
+    let mut message = Vec::new();
+
+    if statement.header.version >= lvau_protocol::envelope::CURRENT_VERSION {
+        let signature = statement
+            .signature
+            .as_mut()
+            .ok_or(SigningError::NotSigned)?;
+        signature.signature.clear();
+        // Approval seals are independent attestations and may be appended
+        // after the author has signed the artifact.
+        statement.approvals.clear();
+        message.extend_from_slice(AUTHOR_SIGNATURE_V2_DOMAIN);
+    } else {
+        // Preserve the exact v1 signature statement for compatibility.
+        statement.signature = None;
+    }
+
+    let envelope_bytes = postcard::to_allocvec(&statement)?;
+    message.reserve(envelope_bytes.len() + ciphertext.len());
+    message.extend_from_slice(&envelope_bytes);
+    message.extend_from_slice(ciphertext);
+    Ok(message)
+}
+
+fn approval_signature_message(
+    envelope: &Envelope,
+    ciphertext: &[u8],
+    approval: &ApprovalSignature,
+) -> Result<Vec<u8>, SigningError> {
+    if envelope.header.version < lvau_protocol::envelope::CURRENT_VERSION {
+        return Ok(envelope.aad_hash.to_vec());
+    }
+
+    let mut artifact = envelope.clone();
+    artifact.approvals.clear();
+    let artifact_bytes = postcard::to_allocvec(&artifact)?;
+    let mut artifact_hasher = Sha256::new();
+    artifact_hasher.update(APPROVAL_ARTIFACT_V2_DOMAIN);
+    artifact_hasher.update(&artifact_bytes);
+    artifact_hasher.update(ciphertext);
+    let artifact_digest = artifact_hasher.finalize();
+
+    let mut message = Vec::new();
+    message.extend_from_slice(APPROVAL_SIGNATURE_V2_DOMAIN);
+    message.extend_from_slice(&artifact_digest);
+    message.extend_from_slice(&approval.signer_fingerprint);
+    message.extend_from_slice(&postcard::to_allocvec(&approval.comment)?);
+    Ok(message)
+}
+
 /// Save a signing key to a file (JSON with base64).
 pub fn save_signing_key(key: &SigningKey, path: &Path, force: bool) -> Result<(), SigningError> {
     if path.exists() && !force {
@@ -72,20 +180,7 @@ pub fn save_signing_key(key: &SigningKey, path: &Path, force: bool) -> Result<()
     let json = serde_json::to_string_pretty(&file_data)
         .map_err(|_| SigningError::InvalidKey("JSON serialization failed".into()))?;
 
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-
-    #[cfg(unix)]
-    {
-        // Private file - can't set after open, but we try best effort
-    }
-
-    f.write_all(json.as_bytes())?;
-    f.sync_all()?;
-    Ok(())
+    write_atomic(path, json.as_bytes(), force)
 }
 
 /// Load a signing key from a file.
@@ -124,8 +219,7 @@ pub fn save_verify_key(key: &VerifyingKey, path: &Path, force: bool) -> Result<(
     let json = serde_json::to_string_pretty(&file_data)
         .map_err(|_| SigningError::InvalidKey("JSON serialization failed".into()))?;
 
-    fs::write(path, json)?;
-    Ok(())
+    write_atomic(path, json.as_bytes(), force)
 }
 
 /// Load a verifying key from a file.
@@ -167,33 +261,7 @@ pub fn sign_file(
     }
 
     let data = fs::read(in_file)?;
-    if data.len() < 4 {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
-
-    // Remove any existing signature for signing
-    envelope.signature = None;
-
-    // Serialize envelope without signature
-    let envelope_bytes = postcard::to_allocvec(&envelope)?;
-
-    // Get ciphertext bytes (everything after the original envelope)
-    let ciphertext = &data[4 + env_len..];
-
-    // Build the message to sign: envelope_bytes || ciphertext
-    let mut message = Vec::with_capacity(envelope_bytes.len() + ciphertext.len());
-    message.extend_from_slice(&envelope_bytes);
-    message.extend_from_slice(ciphertext);
-
-    // Sign
-    let signature = signing_key.sign(&message);
+    let (mut envelope, ciphertext) = decode_capsule_parts(&data)?;
     let verify_key = signing_key.verifying_key();
     let fingerprint = key_fingerprint(&verify_key);
 
@@ -206,13 +274,21 @@ pub fn sign_file(
         }
     };
 
-    // Set the signature on the envelope
+    // Put the metadata in the statement before signing. The signature bytes
+    // themselves are cleared by author_signature_message to avoid recursion.
     envelope.signature = Some(EnvelopeSignature {
         signer_fingerprint: fingerprint,
-        signature: signature.to_bytes().to_vec(),
+        signature: Vec::new(),
         created_at,
         comment,
     });
+    let message = author_signature_message(&envelope, ciphertext)?;
+    let signature = signing_key.sign(&message);
+    envelope
+        .signature
+        .as_mut()
+        .expect("signature metadata was just initialized")
+        .signature = signature.to_bytes().to_vec();
 
     // Serialize the full envelope with signature
     let signed_envelope_bytes = postcard::to_allocvec(&envelope)?;
@@ -224,8 +300,7 @@ pub fn sign_file(
     output.extend_from_slice(&signed_envelope_bytes);
     output.extend_from_slice(ciphertext);
 
-    fs::write(out_file, output)?;
-    Ok(())
+    write_atomic(out_file, &output, force)
 }
 
 /// Verify the Ed25519 signature on an `.lvau` file.
@@ -236,30 +311,20 @@ pub fn verify_signature(
     verify_key: &VerifyingKey,
 ) -> Result<[u8; 32], SigningError> {
     let data = fs::read(in_file)?;
-    if data.len() < 4 {
-        return Err(SigningError::InvalidEnvelope);
-    }
+    let (envelope, ciphertext) = decode_capsule_parts(&data)?;
 
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
-
-    let sig_data = envelope.signature.take().ok_or(SigningError::NotSigned)?;
+    let sig_data = envelope.signature.as_ref().ok_or(SigningError::NotSigned)?;
 
     if sig_data.signature.len() != 64 {
         return Err(SigningError::VerificationFailed);
     }
 
-    // Reconstruct the message: envelope_without_signature || ciphertext
-    let envelope_bytes = postcard::to_allocvec(&envelope)?;
-    let ciphertext = &data[4 + env_len..];
+    let actual_fingerprint = key_fingerprint(verify_key);
+    if sig_data.signer_fingerprint != actual_fingerprint {
+        return Err(SigningError::VerificationFailed);
+    }
 
-    let mut message = Vec::with_capacity(envelope_bytes.len() + ciphertext.len());
-    message.extend_from_slice(&envelope_bytes);
-    message.extend_from_slice(ciphertext);
+    let message = author_signature_message(&envelope, ciphertext)?;
 
     // Verify
     let mut sig_bytes = [0u8; 64];
@@ -270,30 +335,22 @@ pub fn verify_signature(
         .verify(&message, &signature)
         .map_err(|_| SigningError::VerificationFailed)?;
 
-    Ok(sig_data.signer_fingerprint)
+    Ok(actual_fingerprint)
 }
 
 /// Check if a file has a signature without verifying it.
 pub fn has_signature(in_file: &Path) -> Result<Option<[u8; 32]>, SigningError> {
     let data = fs::read(in_file)?;
-    if data.len() < 4 {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
+    let (envelope, _) = decode_capsule_parts(&data)?;
 
     Ok(envelope.signature.map(|s| s.signer_fingerprint))
 }
 
 /// Add an approval seal to an existing `.lvau` file.
 ///
-/// An approval seal signs the AAD hash (which commits to the envelope header),
-/// indicating approval of the artifact's metadata and structure.
+/// A v2 approval seal commits to the public envelope, ciphertext, approving
+/// key fingerprint, and comment. Legacy v1 seals cover only the stored AAD
+/// hash and are retained solely for compatibility.
 pub fn add_approval_seal(
     in_file: &Path,
     out_file: &Path,
@@ -306,28 +363,18 @@ pub fn add_approval_seal(
     }
 
     let data = fs::read(in_file)?;
-    if data.len() < 4 {
-        return Err(SigningError::InvalidEnvelope);
-    }
+    let (mut envelope, ciphertext) = decode_capsule_parts(&data)?;
 
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
-    let ciphertext = &data[4 + env_len..];
-
-    // Sign the AAD hash
-    let signature = signing_key.sign(&envelope.aad_hash);
     let verify_key = signing_key.verifying_key();
     let fingerprint = key_fingerprint(&verify_key);
 
-    let approval = lvau_protocol::envelope::ApprovalSignature {
+    let mut approval = ApprovalSignature {
         signer_fingerprint: fingerprint,
-        signature: signature.to_bytes().to_vec(),
+        signature: Vec::new(),
         comment,
     };
+    let message = approval_signature_message(&envelope, ciphertext, &approval)?;
+    approval.signature = signing_key.sign(&message).to_bytes().to_vec();
 
     envelope.approvals.push(approval);
 
@@ -340,24 +387,14 @@ pub fn add_approval_seal(
     output.extend_from_slice(&new_envelope_bytes);
     output.extend_from_slice(ciphertext);
 
-    fs::write(out_file, output)?;
-    Ok(())
+    write_atomic(out_file, &output, force)
 }
 
 /// Verify all approval seals in a file using a given verify key.
 /// Returns true if at least one valid approval from the given key exists.
 pub fn verify_approvals(in_file: &Path, verify_key: &VerifyingKey) -> Result<bool, SigningError> {
     let data = fs::read(in_file)?;
-    if data.len() < 4 {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(SigningError::InvalidEnvelope);
-    }
-
-    let envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len])?;
+    let (envelope, ciphertext) = decode_capsule_parts(&data)?;
     let fingerprint = key_fingerprint(verify_key);
 
     let mut found_valid = false;
@@ -367,7 +404,8 @@ pub fn verify_approvals(in_file: &Path, verify_key: &VerifyingKey) -> Result<boo
             sig_bytes.copy_from_slice(&approval.signature);
             let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
-            if verify_key.verify(&envelope.aad_hash, &signature).is_ok() {
+            let message = approval_signature_message(&envelope, ciphertext, approval)?;
+            if verify_key.verify(&message, &signature).is_ok() {
                 found_valid = true;
             }
         }
@@ -522,6 +560,15 @@ mod tests {
 
         assert_eq!(signing_key.to_bytes(), loaded_sign.to_bytes());
         assert_eq!(verify_key.as_bytes(), loaded_verify.as_bytes());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(sign_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
@@ -557,5 +604,147 @@ mod tests {
 
         let result = verify_signature(&signed, &verify_key);
         assert!(result.is_err());
+    }
+
+    fn mutate_signature_envelope(path: &Path, mutate: impl FnOnce(&mut EnvelopeSignature)) {
+        let data = fs::read(path).unwrap();
+        let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+        let mut envelope: Envelope = postcard::from_bytes(&data[4..4 + env_len]).unwrap();
+        mutate(envelope.signature.as_mut().unwrap());
+        let envelope_bytes = postcard::to_allocvec(&envelope).unwrap();
+
+        let mut output = Vec::new();
+        output.extend_from_slice(&(envelope_bytes.len() as u32).to_le_bytes());
+        output.extend_from_slice(&envelope_bytes);
+        output.extend_from_slice(&data[4 + env_len..]);
+        fs::write(path, output).unwrap();
+    }
+
+    #[test]
+    fn stored_signer_fingerprint_cannot_be_spoofed() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.txt");
+        let encrypted = dir.path().join("encrypted.lvau");
+        let signed = dir.path().join("signed.lvau");
+        fs::write(&input, "fingerprint binding").unwrap();
+        encrypt_file_password(
+            &input,
+            &encrypted,
+            Secret::new("password".to_string()),
+            None,
+            SecurityProfile::Fast,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let (signing_key, verify_key) = generate_signing_keypair();
+        sign_file(&encrypted, &signed, &signing_key, None, false).unwrap();
+        mutate_signature_envelope(&signed, |signature| {
+            signature.signer_fingerprint = [0xA5; 32];
+        });
+
+        assert!(verify_signature(&signed, &verify_key).is_err());
+    }
+
+    #[test]
+    fn v2_signature_comment_is_authenticated() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.txt");
+        let encrypted = dir.path().join("encrypted.lvau");
+        let signed = dir.path().join("signed.lvau");
+        fs::write(&input, "signature metadata binding").unwrap();
+        encrypt_file_password(
+            &input,
+            &encrypted,
+            Secret::new("password".to_string()),
+            None,
+            SecurityProfile::Fast,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let (signing_key, verify_key) = generate_signing_keypair();
+        sign_file(
+            &encrypted,
+            &signed,
+            &signing_key,
+            Some("reviewed".to_string()),
+            false,
+        )
+        .unwrap();
+        mutate_signature_envelope(&signed, |signature| {
+            signature.comment = Some("forged comment".to_string());
+        });
+
+        assert!(verify_signature(&signed, &verify_key).is_err());
+    }
+
+    #[test]
+    fn v2_approval_commits_to_ciphertext() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.txt");
+        let encrypted = dir.path().join("encrypted.lvau");
+        let approved = dir.path().join("approved.lvau");
+        fs::write(&input, "approval subject").unwrap();
+        encrypt_file_password(
+            &input,
+            &encrypted,
+            Secret::new("password".to_string()),
+            None,
+            SecurityProfile::Fast,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let (approval_key, approval_verify_key) = generate_signing_keypair();
+        add_approval_seal(
+            &encrypted,
+            &approved,
+            &approval_key,
+            Some("approved".to_string()),
+            false,
+        )
+        .unwrap();
+        assert!(verify_approvals(&approved, &approval_verify_key).unwrap());
+
+        let mut data = fs::read(&approved).unwrap();
+        *data.last_mut().unwrap() ^= 0x40;
+        fs::write(&approved, data).unwrap();
+        assert!(!verify_approvals(&approved, &approval_verify_key).unwrap());
+    }
+
+    #[test]
+    fn adding_v2_approval_does_not_invalidate_author_signature() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.txt");
+        let encrypted = dir.path().join("encrypted.lvau");
+        let signed = dir.path().join("signed.lvau");
+        let approved = dir.path().join("approved.lvau");
+        fs::write(&input, "author then approval").unwrap();
+        encrypt_file_password(
+            &input,
+            &encrypted,
+            Secret::new("password".to_string()),
+            None,
+            SecurityProfile::Fast,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let (author_key, author_verify_key) = generate_signing_keypair();
+        let (approval_key, approval_verify_key) = generate_signing_keypair();
+        sign_file(&encrypted, &signed, &author_key, None, false).unwrap();
+        add_approval_seal(&signed, &approved, &approval_key, None, false).unwrap();
+
+        verify_signature(&approved, &author_verify_key).unwrap();
+        assert!(verify_approvals(&approved, &approval_verify_key).unwrap());
     }
 }

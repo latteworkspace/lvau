@@ -11,7 +11,7 @@ It uses standard primitives, safe defaults, and a versioned .lvau envelope you c
 
 CLI-first, GUI-supported, local-first. v0.1.0 is experimental and not audited yet.
 
-https://github.com/lasder-ca/lvau
+https://github.com/latteworkspace/lvau
 ```
 
 ## Hacker News / Reddit
@@ -39,9 +39,9 @@ What it is not:
 
 I would especially appreciate feedback on the threat model, file format, CLI ergonomics, and tests.
 
-GitHub: https://github.com/lasder-ca/lvau
-Threat model: https://github.com/lasder-ca/lvau/blob/main/docs/THREAT_MODEL.md
-Format: https://github.com/lasder-ca/lvau/blob/main/docs/FORMAT.md
+GitHub: https://github.com/latteworkspace/lvau
+Threat model: https://github.com/latteworkspace/lvau/blob/main/docs/THREAT_MODEL.md
+Format: https://github.com/latteworkspace/lvau/blob/main/docs/FORMAT.md
 ```
 
 ## GitHub Release Text
@@ -63,5 +63,5 @@ Rust製の、地味で検証しやすいファイル暗号化ツール Lvau を�
 
 v0.1.0 は実験的な初期リリースで、正式な監査はまだありません。脅威モデルや形式へのフィードバックを歓迎します。
 
-https://github.com/lasder-ca/lvau
+https://github.com/latteworkspace/lvau
 ```

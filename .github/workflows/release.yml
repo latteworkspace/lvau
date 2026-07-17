@@ -1,17 +1,97 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install Linux GUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
+      - name: Validate tag, workspace versions, and changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v"):
+              raise SystemExit(f"release tag must start with v: {tag}")
+          version = tag[1:]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+              raise SystemExit(f"release tag is not a supported SemVer tag: {tag}")
+
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"
+          ]))
+          members = set(metadata["workspace_members"])
+          versions = {
+              package["name"]: package["version"]
+              for package in metadata["packages"]
+              if package["id"] in members
+          }
+          mismatched = {name: found for name, found in versions.items() if found != version}
+          if mismatched:
+              raise SystemExit(f"workspace versions do not match {version}: {mismatched}")
+
+          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          if f"## [{version}]" not in changelog:
+              raise SystemExit(f"CHANGELOG.md has no [{version}] section")
+          PY
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Run tests
+        run: cargo test --locked --workspace --all-features
+      - name: Run CLI self-test
+        run: cargo run --locked --quiet --package lvau-cli -- self-test
+      - name: Run CLI encryption roundtrip
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf 'lvau release roundtrip\n' > "$tmpdir/input.txt"
+          printf 'release-workflow-test-password\n' > "$tmpdir/password.txt"
+          chmod 600 "$tmpdir/password.txt"
+          cargo run --locked --quiet --package lvau-cli -- encrypt \
+            --in-file "$tmpdir/input.txt" \
+            --out-file "$tmpdir/input.lvau" \
+            --password-file "$tmpdir/password.txt" \
+            --profile fast
+          cargo run --locked --quiet --package lvau-cli -- decrypt \
+            --in-file "$tmpdir/input.lvau" \
+            --out-file "$tmpdir/output.txt" \
+            --password-file "$tmpdir/password.txt"
+          cmp "$tmpdir/input.txt" "$tmpdir/output.txt"
+
   build:
     name: Build ${{ matrix.target }}
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,23 +113,21 @@ jobs:
             target: aarch64-apple-darwin
             archive: tar.gz
             exe: ""
-
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ matrix.target }}
       - name: Install Linux GUI dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
-
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} --package lvau-cli --package lvau-gui --package lvau-stub
-
+        run: cargo build --locked --release --target ${{ matrix.target }} --package lvau-cli --package lvau-gui --package lvau-stub
       - name: Stage binaries
         shell: bash
         run: |
@@ -58,48 +136,77 @@ jobs:
           cp "target/${{ matrix.target }}/release/lvau-cli${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
           cp "target/${{ matrix.target }}/release/lvau-gui${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
           cp "target/${{ matrix.target }}/release/lvau-stub${{ matrix.exe }}" "dist/lvau-${{ matrix.target }}/"
-          cp README.md LICENSE "dist/lvau-${{ matrix.target }}/"
-
+          cp README.md README_ja.md SECURITY.md LICENSE "dist/lvau-${{ matrix.target }}/"
       - name: Package Unix
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: tar -czf "lvau-${{ matrix.target }}.tar.gz" -C dist "lvau-${{ matrix.target }}"
-
       - name: Package Windows
         if: matrix.archive == 'zip'
         shell: pwsh
         run: Compress-Archive -Path "dist/lvau-${{ matrix.target }}" -DestinationPath "lvau-${{ matrix.target }}.zip"
-
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lvau-${{ matrix.target }}
           path: |
             *.zip
             *.tar.gz
+          if-no-files-found: error
+          retention-days: 5
 
   release:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true
-
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - name: Generate CycloneDX SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          cargo cyclonedx --format json --all-features
+          mkdir -p artifacts/sbom
+          while IFS= read -r bom; do
+            crate="$(basename "$(dirname "$bom")")"
+            cp "$bom" "artifacts/sbom/${crate}.cdx.json"
+          done < <(find crates -name bom.json -type f -print)
+          test -n "$(find artifacts/sbom -name '*.cdx.json' -print -quit)"
       - name: Generate checksums
         shell: bash
         run: |
           set -euo pipefail
           cd artifacts
-          sha256sum *.tar.gz *.zip > checksums.txt
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+          find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | sort -z | xargs -0 sha256sum > checksums.txt
+          test -s checksums.txt
+      - name: Attest release artifacts
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
-          body_path: docs/V0_3_0_RELEASE_NOTES.md
+          subject-path: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/checksums.txt
+            artifacts/sbom/*.cdx.json
+      - name: Create release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          body_path: docs/RELEASE_NOTES.md
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            artifacts/*
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/checksums.txt
+            artifacts/sbom/*.cdx.json

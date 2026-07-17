@@ -1,0 +1,13 @@
+[advisories]
+# quick-xml is present only through GUI platform/build dependencies
+# (zbus_xml/Wayland scanners); Lvau does not expose an XML parser to capsule
+# input. Upstream pins currently prevent quick-xml >=0.41.0. Review or remove
+# these exceptions by 2026-10-15, and immediately if an XML input path is added.
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
+
+[output]
+quiet = false
+show_tree = true
+
+[yanked]
+enabled = true

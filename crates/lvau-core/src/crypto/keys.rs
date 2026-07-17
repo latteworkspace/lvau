@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::crypto::CryptoError;
@@ -115,30 +116,35 @@ fn write_key_file<P: AsRef<Path>>(
     private: bool,
 ) -> Result<(), CryptoError> {
     let path = path.as_ref();
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp = NamedTempFile::new_in(parent)?;
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        if private {
-            options.mode(0o600);
-        }
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if private { 0o600 } else { 0o644 };
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(mode))?;
     }
 
-    let mut file = options.open(path)?;
-    file.write_all(contents.as_bytes())?;
-    file.sync_all()?;
+    temp.write_all(contents.as_bytes())?;
+    temp.as_file().sync_all()?;
+
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    temp.persist(path)
+        .map_err(|error| CryptoError::Io(error.error))?;
 
     #[cfg(windows)]
     {
         if private {
-            // Apply ACL to restrict file to the current user only
-            if let Err(e) = set_windows_acl(path) {
-                log::warn!("Failed to set strict ACL on key file: {}", e);
-            }
+            set_windows_acl(path)?;
         }
     }
+
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
 
     Ok(())
 }
@@ -261,5 +267,29 @@ impl HybridPrivateKey {
         let mlkem = DecapsulationKey768::from_seed(seed_arr.into());
 
         Ok(Self { x25519, mlkem })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn overwriting_private_key_repairs_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private.lvau-key");
+        fs::write(&path, "old key").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let (private_key, _) = generate_keypair();
+
+        private_key.save_to_file(&path).unwrap();
+
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

@@ -1,76 +1,76 @@
 # Contributing to Lvau
 
-Thanks for helping improve Lvau. This project handles security-sensitive code, so small, clear, tested changes are preferred.
+Lvau handles security-sensitive data. Keep changes focused, reviewable, and
+covered by tests. Read [AGENTS.md](AGENTS.md),
+[docs/FORMAT.md](docs/FORMAT.md), and
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before changing cryptographic or
+format code.
 
-## Prerequisites
+## Environment
 
-- Stable Rust and Cargo from <https://rustup.rs/>
-- `rustfmt` and `clippy`: `rustup component add rustfmt clippy`
-
-## Build
+The maintained development environment is WSL2 with Ubuntu 26.04, stable Rust,
+Cargo, `rustfmt`, and Clippy. Native Windows and macOS behavior is exercised in
+GitHub Actions.
 
 ```sh
-git clone https://github.com/lasder-ca/lvau.git
+git clone https://github.com/latteworkspace/lvau.git
 cd lvau
-cargo build --workspace
-cargo build --workspace --release
+rustup component add rustfmt clippy
+cargo build --locked --workspace
 ```
 
-## Test
+Linux GUI builds also require the X11, Wayland, input, and OpenGL development
+packages listed in `.github/workflows/ci.yml`.
+
+## Required checks
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace --release
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+cargo build --locked --workspace --release
+cargo tree --duplicates
+cargo run --locked --quiet --package lvau-cli -- self-test
 ```
 
-## Run the CLI
+Run `cargo audit` when available. Do not suppress an advisory without recording
+its exact scope, reason, owner, and review deadline in `.cargo/audit.toml`.
+
+## Behavior changes
+
+- Add a failing regression test before fixing a bug.
+- Preserve CLI commands, arguments, exit behavior, JSON fields, and automation
+  streams unless the SemVer and migration impact is explicitly accepted.
+- Do not change the `.lvau` format without a versioned decoder path, bounds and
+  tamper tests, `docs/FORMAT.md`, `CHANGELOG.md`, and migration instructions.
+- Do not invent cryptographic primitives or describe experimental composition
+  as audited, production-proven, unbreakable, or “military-grade.”
+- Never put real secrets, credentials, customer data, private endpoints, or
+  production identifiers in source, fixtures, output, or documentation.
+- Keep `README.md` and `README_ja.md` behaviorally synchronized.
+
+## CLI and GUI
 
 ```sh
-cargo run --package lvau-cli -- encrypt --in-file input.txt --out-file output.lvau --password
+cargo run --locked --package lvau-cli -- --help
+cargo run --locked --release --package lvau-gui
 ```
 
-For scripts and CI, use a local password file:
+Use prompts or private password files instead of password command-line values.
+Automation output belongs on stdout; warnings, diagnostics, prompts, and
+progress belong on stderr. GUI changes must continue to call `lvau-core` for
+cryptography and should be manually checked for progress, cancellation,
+keyboard use, narrow layouts, and secret persistence.
 
-```sh
-cargo run --package lvau-cli -- encrypt --in-file input.txt --out-file output.lvau --password-file password.txt
-```
+## Pull requests and releases
 
-## Run the GUI
+Explain security and compatibility impact, list verification performed, and
+call out anything untested. Update all workspace crate versions together for a
+release, use SemVer, and add a matching `CHANGELOG.md` section.
 
-```sh
-cargo run --release --package lvau-gui
-```
+Do not push, create tags, publish a GitHub Release, or deploy the API/site
+without explicit maintainer authorization. Follow
+[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) only after that approval.
 
-## Pull Requests
-
-1. Keep the scope focused.
-2. Add or update tests for behavior changes.
-3. Update docs when commands, formats, release assets, or security wording changes.
-4. Run the full check suite before opening the PR.
-5. Explain security-sensitive changes clearly.
-
-## Crypto and Format Rules
-
-- Do not introduce custom cryptography as a security boundary.
-- Do not weaken Argon2id parameters, nonce generation, AEAD authentication, or key handling.
-- Do not change the `.lvau` format without updating `docs/FORMAT.md`, tests, and `CHANGELOG.md`.
-- Do not make claims such as "unbreakable", "military-grade", "formally audited", or "production-proven".
-- Treat hybrid keypair encryption, cascade profiles, GUI, and SFX as experimental unless the project status changes.
-
-## Security Issues
-
-Do not open public issues for sensitive vulnerabilities. Follow [SECURITY.md](SECURITY.md).
-
-## Useful Labels
-
-- `good first issue`
-- `help wanted`
-- `documentation`
-- `security`
-- `crypto`
-- `cli`
-- `gui`
-- `release`
-- `format`
+Report sensitive issues through [SECURITY.md](SECURITY.md), never a public
+issue.

@@ -1,66 +1,52 @@
 # Roadmap
 
-This document outlines the planned releases for Lvau. Dates are estimates, not commitments.
+Roadmap items are intentions, not release commitments. The implementation and
+`CHANGELOG.md` are authoritative for shipped behavior.
 
-## v0.3.0 — Inspectable, Signed, Sealed
+## 0.4.0 release candidate
 
-**Theme**: Make Lvau clearly differentiated from age, VeraCrypt, Cryptomator, and SOPS.
+0.4.0 introduces a v2 envelope commitment while retaining v1 reads, bounded
+envelope parsing, stricter resource validation, authenticated empty payloads,
+trailing-ciphertext rejection, safer output handling, multi-recipient hybrid
+key-pair encryption, recovery-share tooling, structured-secret commands,
+policy/preflight reporting, advisory approval seals, and hardened bundle
+validation.
 
-### Implemented
-- Sealed bundle mode (`lvau-cli bundle pack/extract/inspect/list/verify`)
-- Ed25519 signed provenance (`lvau-cli sign-keygen/sign/verify-signature`)
-- `--json` output for `inspect` and `verify`
-- Hardened test suite (property roundtrips, corrupt envelopes, path traversal, symlinks)
-- Documentation overhaul (comparison table, roadmap, honest positioning)
-- Metadata privacy profiles for bundles (`--metadata-profile`)
-- Size padding profiles for bundles (`--pad`)
-- Bundle extraction safety (path traversal, absolute paths, symlinks, overwrite protection)
-- `--dry-run` mode for bundle extraction
+Release engineering for this candidate includes cross-platform CLI smoke tests,
+RustSec checks with time-bounded exceptions, checksums, CycloneDX SBOMs, and
+GitHub artifact attestations. It remains experimental and unaudited.
 
-## v0.4.0 — Recovery and Multi-Recipient
+## After 0.4.0
 
-**Theme**: Make encrypted data recoverable and shareable.
+Priorities, in rough order:
 
-### Planned
-- **Recovery shares**: Shamir Secret Sharing for private key recovery. Split a key into N shares with threshold T. `lvau-cli recovery split/combine/inspect`.
-- **Rekey / Recipient slots**: Multiple recipients for a single encrypted file. Add or remove recipients without re-encrypting the payload. `lvau-cli rekey add-recipient/remove-recipient/list-recipients`.
-- **Structured secret mode**: Lightweight developer-focused encrypted config files (.env, JSON, YAML, TOML). `lvau-cli secret encrypt/decrypt/edit/print --redact`.
-- **Value-only encryption**: Optional per-value encryption within structured config files (placeholder in v0.3.0, implementation in v0.4.0).
+- add real historical binary fixtures from every supported writer release;
+- stream bundle packing and extraction without buffering the full plaintext;
+- further harden extraction against filesystem races and special files;
+- modularize the CLI while preserving commands, exit behavior, and JSON output;
+- add stable JSON schemas and broader cross-platform integration tests;
+- improve GUI cancellation, accessibility, and headless-test coverage;
+- define a reviewed recipient-rekey format before implementing add/remove
+  operations; and
+- decide on a maintainer-controlled release-signing method in addition to
+  checksums, SBOMs, and GitHub attestations.
 
-### Design Notes
-- Recovery shares protect private keys, not passwords.
-- Rekey uses a random data encryption key with recipient-specific wrapping.
-- Adding a recipient does not require re-encrypting the payload.
-- Removing a recipient should warn that old copies remain decryptable.
-- Structured secret mode does not need to match SOPS feature-for-feature.
-- The `edit` command will use `$EDITOR` with a secure temporary file.
+Recipient rekey, value-only structured-secret encryption, cloud KMS wrapping,
+OCI SDK/control-plane operations, and threshold decryption are **not** current
+features. They require separate designs and compatibility review.
 
-## v1.0 — Stable Format and Audit
+## 1.0 readiness criteria
 
-**Theme**: Stability, trust, and production readiness.
+1.0 requires a documented stable format/API policy, a complete migration and
+fixture matrix, resolved high-severity security findings, reproducible release
+practice, sustained cross-platform testing, and readiness for independent
+security review. An audit is desirable but must never be implied before it has
+actually occurred.
 
-### Goals
-- **Format freeze**: The `.lvau` envelope format will be frozen at v1.0. Breaking format changes after v1.0 must increment the major version.
-- **Formal audit**: Engage a third-party security firm to audit the cryptographic implementation, envelope parsing, and key management.
-- **Stable API**: The `lvau-core` public API should be stable enough for library consumers.
-- **SBOM**: Include a Software Bill of Materials in release assets.
-- **Signed releases**: Sign release checksums with the project signing key.
-- **Demo recordings**: Include terminal recordings or GIFs in documentation.
+## Non-goals
 
-### Prerequisites
-- All v0.3.0 and v0.4.0 features implemented and tested.
-- No known cryptographic implementation issues.
-- Comprehensive property-based test coverage.
-- Clear upgrade path from v0.x files.
-
-## Non-Goals
-
-The following are explicitly not planned for Lvau:
-
-- Full-disk encryption (use VeraCrypt)
-- Cloud vault synchronization (use Cryptomator)
-- Network protocol / TLS replacement
-- Steganography
-- Custom cipher invention as a security boundary
-- Claims of "military-grade" or "unbreakable" security
-- Formal verification of the Rust code (aspirational, but not a release blocker)
+- custom cipher invention;
+- full-disk encryption or mounted encrypted filesystems;
+- steganography or plausible deniability;
+- TLS/network-protocol replacement; and
+- claims such as “unbreakable” or “military-grade.”

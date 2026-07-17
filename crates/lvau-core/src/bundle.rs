@@ -5,12 +5,14 @@
 //! per-file BLAKE3 hashes. By default, no file names or directory structure
 //! are exposed in the public envelope.
 
-use crate::crypto::{decrypt_file_password, verify_file_password, CryptoError};
+use crate::crypto::{decrypt_file_password, CryptoError};
 use lvau_protocol::envelope::{BundleEntry, BundleManifest, ContentType, EnvelopeHeader};
 use secrecy::Secret;
-use std::fs::{self, File};
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
+use tempfile::{tempdir, NamedTempFile};
 use walkdir::WalkDir;
 
 /// Errors specific to bundle operations.
@@ -26,6 +28,10 @@ pub enum BundleError {
     PathTraversal(String),
     #[error("Symlink rejected: {0}")]
     SymlinkRejected(String),
+    #[error("Hardlink rejected: {0}")]
+    HardlinkRejected(String),
+    #[error("Special file rejected: {0}")]
+    SpecialFileRejected(String),
     #[error("Refusing to overwrite: {0}")]
     OutputExists(String),
     #[error("Bundle manifest error: {0}")]
@@ -66,6 +72,11 @@ pub enum PaddingProfile {
 /// - Windows drive paths (e.g., `C:\`)
 /// - Paths starting with `/` or `\`
 pub fn validate_relative_path(path: &str) -> Result<PathBuf, BundleError> {
+    if path.is_empty() || path.contains('\\') {
+        return Err(BundleError::PathTraversal(format!(
+            "Empty or non-canonical path rejected: {path}"
+        )));
+    }
     let p = Path::new(path);
 
     // Reject absolute paths
@@ -102,7 +113,12 @@ pub fn validate_relative_path(path: &str) -> Result<PathBuf, BundleError> {
                     "Root/prefix path rejected: {path}"
                 )));
             }
-            _ => {}
+            Component::CurDir => {
+                return Err(BundleError::PathTraversal(format!(
+                    "Current-directory component rejected: {path}"
+                )));
+            }
+            Component::Normal(_) => {}
         }
     }
 
@@ -136,6 +152,9 @@ fn collect_files(
         // Skip directories, only collect files
         if entry.file_type().is_dir() {
             continue;
+        }
+        if !entry.file_type().is_file() && !entry.path_is_symlink() {
+            return Err(BundleError::SpecialFileRejected(path.display().to_string()));
         }
 
         let relative = path
@@ -233,14 +252,17 @@ pub fn pack_directory(
 
     // Write to a temp file and encrypt it
     let parent = out_file.parent().unwrap_or_else(|| Path::new("."));
-    let temp_plain = parent.join(format!(".lvau-bundle-{}.tmp", std::process::id()));
-
-    fs::write(&temp_plain, &bundle_payload).map_err(BundleError::Io)?;
+    let mut temp_plain = NamedTempFile::new_in(parent).map_err(BundleError::Io)?;
+    temp_plain
+        .write_all(&bundle_payload)
+        .map_err(BundleError::Io)?;
+    temp_plain.as_file().sync_all().map_err(BundleError::Io)?;
+    let temp_plain_path = temp_plain.path().to_path_buf();
 
     let result = match credential {
         crate::crypto::EncryptCredential::Password(password, seed) => {
-            crate::crypto::encrypt_file_password(
-                &temp_plain,
+            crate::crypto::encrypt_file_password_with_content_type(
+                &temp_plain_path,
                 out_file,
                 password,
                 seed,
@@ -248,80 +270,33 @@ pub fn pack_directory(
                 None,
                 policy,
                 allow_policy_override,
+                Some(ContentType::Bundle),
             )
         }
-        crate::crypto::EncryptCredential::Keypairs(pubs) => crate::crypto::encrypt_file_keypairs(
-            &temp_plain,
-            out_file,
-            &pubs,
-            profile,
-            None,
-            policy,
-            allow_policy_override,
-        ),
+        crate::crypto::EncryptCredential::Keypairs(pubs) => {
+            crate::crypto::encrypt_file_keypairs_with_content_type(
+                &temp_plain_path,
+                out_file,
+                &pubs,
+                profile,
+                None,
+                policy,
+                allow_policy_override,
+                Some(ContentType::Bundle),
+            )
+        }
     };
 
-    // Always clean up temp file
-    let _ = fs::remove_file(&temp_plain);
     result.map_err(BundleError::Crypto)?;
 
-    // Now we need to update the content_type in the envelope.
-    // We'll do this by reading the file, patching the envelope, and rewriting.
-    patch_content_type(out_file, ContentType::Bundle)?;
-
     Ok(manifest)
-}
-
-/// Patch the content_type field in an existing .lvau file's envelope.
-fn patch_content_type(file_path: &Path, content_type: ContentType) -> Result<(), BundleError> {
-    let data = fs::read(file_path).map_err(BundleError::Io)?;
-    if data.len() < 4 {
-        return Err(BundleError::ManifestError("File too small".into()));
-    }
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(BundleError::ManifestError(
-            "File too small for envelope".into(),
-        ));
-    }
-
-    let mut envelope: lvau_protocol::envelope::Envelope =
-        postcard::from_bytes(&data[4..4 + env_len]).map_err(BundleError::Serialization)?;
-
-    envelope.content_type = Some(content_type);
-
-    let new_env_bytes = postcard::to_allocvec(&envelope).map_err(BundleError::Serialization)?;
-    let new_len = new_env_bytes.len() as u32;
-
-    let mut new_data = Vec::with_capacity(4 + new_env_bytes.len() + (data.len() - 4 - env_len));
-    new_data.extend_from_slice(&new_len.to_le_bytes());
-    new_data.extend_from_slice(&new_env_bytes);
-    new_data.extend_from_slice(&data[4 + env_len..]);
-
-    fs::write(file_path, new_data).map_err(BundleError::Io)?;
-    Ok(())
 }
 
 /// Inspect the public metadata of a bundle without decrypting.
 pub fn inspect_bundle(
     in_file: &Path,
 ) -> Result<(EnvelopeHeader, Option<ContentType>, Option<String>), BundleError> {
-    let data = fs::read(in_file).map_err(BundleError::Io)?;
-    if data.len() < 4 {
-        return Err(BundleError::ManifestError("File too small".into()));
-    }
-    let env_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + env_len {
-        return Err(BundleError::ManifestError(
-            "File too small for envelope".into(),
-        ));
-    }
-
-    let envelope: lvau_protocol::envelope::Envelope =
-        postcard::from_bytes(&data[4..4 + env_len]).map_err(BundleError::Serialization)?;
-    envelope
-        .validate()
-        .map_err(|e| BundleError::ManifestError(e.to_string()))?;
+    let envelope = crate::crypto::read_envelope_from_path(in_file).map_err(BundleError::Crypto)?;
 
     Ok((
         envelope.header,
@@ -336,20 +311,19 @@ pub fn list_bundle(
     password: Secret<String>,
 ) -> Result<BundleManifest, BundleError> {
     // Decrypt to memory
-    let temp_dir = std::env::temp_dir();
-    let temp_plain = temp_dir.join(format!(".lvau-list-{}.tmp", std::process::id()));
+    let temp_dir = tempdir().map_err(BundleError::Io)?;
+    let temp_plain_path = temp_dir.path().join("payload.tmp");
 
-    decrypt_file_password(in_file, &temp_plain, password, None, None)
+    decrypt_file_password(in_file, &temp_plain_path, password, None, None)
         .map_err(BundleError::Crypto)?;
 
-    let bundle_data = fs::read(&temp_plain).map_err(BundleError::Io)?;
-    let _ = fs::remove_file(&temp_plain);
+    let bundle_data = fs::read(&temp_plain_path).map_err(BundleError::Io)?;
 
-    parse_bundle_manifest(&bundle_data)
+    parse_and_validate_bundle_payload(&bundle_data).map(|(manifest, _)| manifest)
 }
 
-/// Parse a bundle manifest from decrypted payload data.
-fn parse_bundle_manifest(data: &[u8]) -> Result<BundleManifest, BundleError> {
+/// Parse and fully validate a decrypted bundle payload before it is used.
+fn parse_and_validate_bundle_payload(data: &[u8]) -> Result<(BundleManifest, usize), BundleError> {
     if data.len() < 4 {
         return Err(BundleError::ManifestError(
             "Bundle payload too small".into(),
@@ -357,16 +331,167 @@ fn parse_bundle_manifest(data: &[u8]) -> Result<BundleManifest, BundleError> {
     }
 
     let manifest_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    if data.len() < 4 + manifest_len {
+    let file_data_start = 4usize
+        .checked_add(manifest_len)
+        .ok_or_else(|| BundleError::ManifestError("Manifest length overflow".into()))?;
+    if data.len() < file_data_start {
         return Err(BundleError::ManifestError(
             "Bundle payload truncated before manifest end".into(),
         ));
     }
 
-    let manifest: BundleManifest =
-        postcard::from_bytes(&data[4..4 + manifest_len]).map_err(BundleError::Serialization)?;
+    let (manifest, remaining): (BundleManifest, &[u8]) =
+        postcard::take_from_bytes(&data[4..file_data_start]).map_err(BundleError::Serialization)?;
+    if !remaining.is_empty() {
+        return Err(BundleError::ManifestError(
+            "Manifest contains trailing non-canonical bytes".into(),
+        ));
+    }
 
-    Ok(manifest)
+    let mut paths = HashSet::new();
+    let mut ranges = Vec::with_capacity(manifest.entries.len());
+    for entry in &manifest.entries {
+        validate_relative_path(&entry.relative_path)?;
+        let portable_path = entry.relative_path.to_lowercase();
+        if !paths.insert(portable_path) {
+            return Err(BundleError::ManifestError(format!(
+                "Duplicate or cross-platform-colliding path: {}",
+                entry.relative_path
+            )));
+        }
+
+        let offset = usize::try_from(entry.offset).map_err(|_| {
+            BundleError::ManifestError(format!(
+                "File offset is not representable: {}",
+                entry.relative_path
+            ))
+        })?;
+        let size = usize::try_from(entry.size).map_err(|_| {
+            BundleError::ManifestError(format!(
+                "File size is not representable: {}",
+                entry.relative_path
+            ))
+        })?;
+        let start = file_data_start.checked_add(offset).ok_or_else(|| {
+            BundleError::ManifestError(format!("File offset overflow: {}", entry.relative_path))
+        })?;
+        let end = start.checked_add(size).ok_or_else(|| {
+            BundleError::ManifestError(format!("File size overflow: {}", entry.relative_path))
+        })?;
+        if end > data.len() {
+            return Err(BundleError::ManifestError(format!(
+                "File data truncated for: {}",
+                entry.relative_path
+            )));
+        }
+
+        let actual_hash = blake3::hash(&data[start..end]);
+        if *actual_hash.as_bytes() != entry.blake3_hash {
+            return Err(BundleError::ManifestError(format!(
+                "BLAKE3 hash mismatch for: {}",
+                entry.relative_path
+            )));
+        }
+        if start != end {
+            ranges.push((start, end, entry.relative_path.as_str()));
+        }
+    }
+
+    ranges.sort_unstable_by_key(|range| range.0);
+    for pair in ranges.windows(2) {
+        if pair[0].1 > pair[1].0 {
+            return Err(BundleError::ManifestError(format!(
+                "Overlapping file ranges: {} and {}",
+                pair[0].2, pair[1].2
+            )));
+        }
+    }
+
+    Ok((manifest, file_data_start))
+}
+
+fn configure_no_follow(options: &mut OpenOptions) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+}
+
+fn validate_open_extraction_target(file: &File, path: &Path) -> Result<(), BundleError> {
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(BundleError::SpecialFileRejected(path.display().to_string()));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err(BundleError::HardlinkRejected(path.display().to_string()));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+        };
+
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle() as isize, std::ptr::addr_of_mut!(info))
+        };
+        if ok == 0 {
+            return Err(BundleError::Io(io::Error::last_os_error()));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(BundleError::SymlinkRejected(path.display().to_string()));
+        }
+        if info.nNumberOfLinks != 1 {
+            return Err(BundleError::HardlinkRejected(path.display().to_string()));
+        }
+    }
+
+    Ok(())
+}
+
+fn open_extraction_target(path: &Path, force: bool) -> Result<File, BundleError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) if !force => Err(BundleError::OutputExists(path.display().to_string())),
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(BundleError::SymlinkRejected(path.display().to_string()));
+            }
+            if !metadata.file_type().is_file() {
+                return Err(BundleError::SpecialFileRejected(path.display().to_string()));
+            }
+
+            let mut options = OpenOptions::new();
+            options.write(true);
+            configure_no_follow(&mut options);
+            let file = options.open(path)?;
+            validate_open_extraction_target(&file, path)?;
+            file.set_len(0)?;
+            Ok(file)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            configure_no_follow(&mut options);
+            let file = options.open(path)?;
+            validate_open_extraction_target(&file, path)?;
+            Ok(file)
+        }
+        Err(error) => Err(BundleError::Io(error)),
+    }
 }
 
 /// Extract a bundle to a directory.
@@ -374,25 +499,20 @@ pub fn extract_bundle(
     in_file: &Path,
     out_dir: &Path,
     password: Secret<String>,
-    allow_symlinks: bool,
+    _allow_symlinks: bool,
     force: bool,
     dry_run: bool,
 ) -> Result<BundleManifest, BundleError> {
     // Decrypt to temp
-    let temp_dir = std::env::temp_dir();
-    let temp_plain = temp_dir.join(format!(".lvau-extract-{}.tmp", std::process::id()));
+    let temp_dir = tempdir().map_err(BundleError::Io)?;
+    let temp_plain_path = temp_dir.path().join("payload.tmp");
 
-    decrypt_file_password(in_file, &temp_plain, password, None, None)
+    decrypt_file_password(in_file, &temp_plain_path, password, None, None)
         .map_err(BundleError::Crypto)?;
 
-    let bundle_data = fs::read(&temp_plain).map_err(BundleError::Io)?;
-    let _ = fs::remove_file(&temp_plain);
+    let bundle_data = fs::read(&temp_plain_path).map_err(BundleError::Io)?;
 
-    let manifest = parse_bundle_manifest(&bundle_data)?;
-
-    // Compute where file data starts
-    let manifest_len = u32::from_le_bytes(bundle_data[0..4].try_into().unwrap()) as usize;
-    let file_data_start = 4 + manifest_len;
+    let (manifest, file_data_start) = parse_and_validate_bundle_payload(&bundle_data)?;
 
     for entry in &manifest.entries {
         // Validate path safety
@@ -424,43 +544,19 @@ pub fn extract_bundle(
             }
         }
 
-        // Check overwrite
-        if !dry_run && target_path.exists() && !force {
-            return Err(BundleError::OutputExists(target_path.display().to_string()));
-        }
-
-        // Check symlink (if the target already exists and is a symlink)
-        if !dry_run
-            && target_path.exists()
-            && target_path.symlink_metadata()?.file_type().is_symlink()
-            && !allow_symlinks
-        {
-            return Err(BundleError::SymlinkRejected(
-                target_path.display().to_string(),
-            ));
-        }
-
         // Extract file data
-        let start = file_data_start + entry.offset as usize;
-        let end = start + entry.size as usize;
-
-        if end > bundle_data.len() {
-            return Err(BundleError::ManifestError(format!(
-                "File data truncated for: {}",
-                entry.relative_path
-            )));
-        }
+        let offset = usize::try_from(entry.offset)
+            .map_err(|_| BundleError::ManifestError("File offset is not representable".into()))?;
+        let size = usize::try_from(entry.size)
+            .map_err(|_| BundleError::ManifestError("File size is not representable".into()))?;
+        let start = file_data_start
+            .checked_add(offset)
+            .ok_or_else(|| BundleError::ManifestError("File offset overflow".into()))?;
+        let end = start
+            .checked_add(size)
+            .ok_or_else(|| BundleError::ManifestError("File size overflow".into()))?;
 
         let file_data = &bundle_data[start..end];
-
-        // Verify BLAKE3 hash
-        let actual_hash = blake3::hash(file_data);
-        if *actual_hash.as_bytes() != entry.blake3_hash {
-            return Err(BundleError::ManifestError(format!(
-                "BLAKE3 hash mismatch for: {}",
-                entry.relative_path
-            )));
-        }
 
         if dry_run {
             // Just print what would be extracted
@@ -471,7 +567,11 @@ pub fn extract_bundle(
             );
         } else {
             // Write the file
-            let mut f = File::create(&target_path).map_err(BundleError::Io)?;
+            // The current manifest encodes regular files only. Existing
+            // symlink/reparse-point and multi-link targets are always rejected,
+            // including with --force, so extraction cannot overwrite an
+            // external file through those aliases.
+            let mut f = open_extraction_target(&target_path, force)?;
             f.write_all(file_data).map_err(BundleError::Io)?;
             f.sync_all().map_err(BundleError::Io)?;
 
@@ -487,11 +587,12 @@ pub fn verify_bundle(
     in_file: &Path,
     password: Secret<String>,
 ) -> Result<BundleManifest, BundleError> {
-    // First verify the outer envelope integrity
-    verify_file_password(in_file, password.clone(), None, None).map_err(BundleError::Crypto)?;
-
-    // Then verify the manifest and file hashes
-    let manifest = list_bundle(in_file, password)?;
+    let temp_dir = tempdir().map_err(BundleError::Io)?;
+    let temp_plain_path = temp_dir.path().join("payload.tmp");
+    decrypt_file_password(in_file, &temp_plain_path, password, None, None)
+        .map_err(BundleError::Crypto)?;
+    let bundle_data = fs::read(&temp_plain_path).map_err(BundleError::Io)?;
+    let (manifest, _) = parse_and_validate_bundle_payload(&bundle_data)?;
 
     log::info!("Bundle verified: {} files", manifest.entries.len());
     Ok(manifest)
@@ -546,6 +647,49 @@ mod tests {
         assert!(validate_relative_path("file.txt").is_ok());
         assert!(validate_relative_path("subdir/file.txt").is_ok());
         assert!(validate_relative_path("a/b/c/deep.bin").is_ok());
+    }
+
+    fn encode_test_bundle_payload(manifest: &BundleManifest, file_data: &[u8]) -> Vec<u8> {
+        let manifest_bytes = postcard::to_allocvec(manifest).unwrap();
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&(manifest_bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&manifest_bytes);
+        payload.extend_from_slice(file_data);
+        payload
+    }
+
+    #[test]
+    fn bundle_validation_rejects_offset_overflow_without_panicking() {
+        let manifest = BundleManifest {
+            entries: vec![BundleEntry {
+                relative_path: "file.bin".to_string(),
+                size: 1,
+                blake3_hash: *blake3::hash(&[0]).as_bytes(),
+                offset: u64::MAX,
+            }],
+            created_at: None,
+            tool_version: None,
+        };
+        let payload = encode_test_bundle_payload(&manifest, &[0]);
+
+        assert!(parse_and_validate_bundle_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn bundle_validation_rejects_entry_hash_mismatch() {
+        let manifest = BundleManifest {
+            entries: vec![BundleEntry {
+                relative_path: "file.bin".to_string(),
+                size: 4,
+                blake3_hash: [0xA5; 32],
+                offset: 0,
+            }],
+            created_at: None,
+            tool_version: None,
+        };
+        let payload = encode_test_bundle_payload(&manifest, b"data");
+
+        assert!(parse_and_validate_bundle_payload(&payload).is_err());
     }
 
     #[test]
@@ -801,5 +945,90 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn force_extract_rejects_existing_hardlink() {
+        let dir = tempdir().unwrap();
+        let in_dir = dir.path().join("input");
+        let out_dir = dir.path().join("output");
+        let out_file = dir.path().join("bundle.lvau");
+        let outside = dir.path().join("outside.txt");
+
+        fs::create_dir_all(&in_dir).unwrap();
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(in_dir.join("test.txt"), "bundle data").unwrap();
+        fs::write(&outside, "outside data").unwrap();
+        fs::hard_link(&outside, out_dir.join("test.txt")).unwrap();
+        pack_directory(
+            &in_dir,
+            &out_file,
+            crate::crypto::EncryptCredential::Password(test_password(), None),
+            SecurityProfile::Fast,
+            false,
+            &PaddingProfile::None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let result = extract_bundle(&out_file, &out_dir, test_password(), false, true, false);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(outside).unwrap(), "outside data");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn pack_rejects_special_files() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempdir().unwrap();
+        let in_dir = dir.path().join("input");
+        fs::create_dir_all(&in_dir).unwrap();
+        let socket_path = in_dir.join("service.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+
+        let result = collect_files(&in_dir, false);
+
+        assert!(matches!(
+            result,
+            Err(BundleError::SpecialFileRejected(path)) if path.contains("service.sock")
+        ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn force_extract_never_follows_existing_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let in_dir = dir.path().join("input");
+        let out_dir = dir.path().join("output");
+        let out_file = dir.path().join("bundle.lvau");
+        let outside = dir.path().join("outside.txt");
+        fs::create_dir_all(&in_dir).unwrap();
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(in_dir.join("test.txt"), "bundle data").unwrap();
+        fs::write(&outside, "outside data").unwrap();
+        symlink(&outside, out_dir.join("test.txt")).unwrap();
+        pack_directory(
+            &in_dir,
+            &out_file,
+            crate::crypto::EncryptCredential::Password(test_password(), None),
+            SecurityProfile::Fast,
+            false,
+            &PaddingProfile::None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let result = extract_bundle(&out_file, &out_dir, test_password(), true, true, false);
+
+        assert!(matches!(result, Err(BundleError::SymlinkRejected(_))));
+        assert_eq!(fs::read_to_string(outside).unwrap(), "outside data");
     }
 }

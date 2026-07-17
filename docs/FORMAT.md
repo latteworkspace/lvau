@@ -1,20 +1,23 @@
 # `.lvau` Envelope Format
 
-This document describes the `.lvau` format implemented by `lvau-protocol` and `lvau-core`.
+This document describes the format accepted by `lvau-protocol` and
+`lvau-core` 0.4.0. The format is experimental and is not stable before 1.0.
+Do not implement an independent reader from this document alone; postcard
+encoding is tied to the Rust data model and serialization version.
 
-> The `.lvau` format is not stable before v1.0.
+## Physical layout
 
-## Encoding
+Every capsule is:
 
-Lvau uses a streaming architecture for large file support. A `.lvau` file consists of:
+1. a four-byte little-endian `u32` envelope length;
+2. exactly that many bytes of postcard-encoded `Envelope` data; and
+3. the encrypted payload frames.
 
-1. A 4-byte little-endian unsigned integer (`u32`) representing the length of the serialized `Envelope` header.
-2. The postcard-serialized `Envelope` value.
-3. The concatenated encrypted payload chunks.
-
-Postcard is compact and version-sensitive, so the byte layout is tied to the Rust data structures and postcard version used by Lvau.
-
-## Envelope Fields
+The common reader rejects an empty envelope, envelopes larger than 1 MiB,
+truncated input, trailing bytes inside the encoded envelope, invalid magic,
+unsupported versions, invalid recipient/KDF combinations, and invalid nonce
+layouts. No payload algorithm other than the three file-encryption algorithms
+listed below is accepted.
 
 ```rust
 pub struct Envelope {
@@ -24,25 +27,19 @@ pub struct Envelope {
     pub secondary_nonce: Option<[u8; 12]>,
     pub aad_hash: [u8; 32],
     pub metadata: Vec<u8>,
-    pub content_type: Option<ContentType>,    // v0.3.0+
-    pub signature: Option<EnvelopeSignature>, // v0.3.0+
-    pub public_label: Option<String>,         // v0.3.0+
+    pub content_type: Option<ContentType>,
+    pub signature: Option<EnvelopeSignature>,
+    pub public_label: Option<String>,
+    pub approvals: Vec<ApprovalSignature>,
+    pub release_metadata: Option<ReleaseMetadata>,
+    pub policy_overridden: bool,
+    pub recovery_metadata: Option<Vec<u8>>,
 }
 ```
 
-(Note: `ciphertext` is no longer stored in the `Envelope` struct; chunks are streamed directly to the file after the envelope.)
+`None` content type means `SingleFile` for legacy compatibility.
 
-### New fields (v0.3.0)
-
-- `content_type`: Distinguishes between `SingleFile` and `Bundle` payloads. Absent (or `None`) for v0.2.x files, which are treated as `SingleFile`.
-- `signature`: Optional Ed25519 signature covering the envelope and ciphertext. See "Signatures" section below.
-- `public_label`: Optional user-provided label visible in public inspect output. Only set when the user explicitly passes `--public-label`.
-
-### Backward Compatibility
-
-All new fields are `Option<T>` with `#[serde(default)]`. Files created by v0.2.x will deserialize with `None` for these fields. v0.3.0 can read v0.2.x files without errors.
-
-### Header
+## Header and versions
 
 ```rust
 pub struct EnvelopeHeader {
@@ -55,167 +52,153 @@ pub struct EnvelopeHeader {
 }
 ```
 
-- `magic`: `LVAU` (`0x4c 0x56 0x41 0x55`)
-- `version`: currently `1`
-- `profile`: selected security profile
-- `algorithm`: payload algorithm identifier
-- `kdf`: Argon2id parameters for password encryption, absent for keypair encryption
-- `recipients`: password marker or experimental hybrid keypair recipient data
+- `magic` is the ASCII byte sequence `LVAU`.
+- 0.4.0 writes format version `2` and reads versions `1` and `2`.
+- There must be 1 to 64 recipients. Password and key-pair recipients cannot be
+  mixed in one capsule.
+- Password capsules must have the exact Argon2id tuple for their profile.
+  Key-pair capsules must not have KDF parameters.
 
-The postcard-serialized header is hashed with SHA-256. The resulting `aad_hash` is passed as AEAD additional authenticated data for every encrypted chunk, along with the global chunk index. Decryptors recompute the hash and reject mismatches before payload decryption.
+| Format | Written by | Reader behavior | Payload commitment |
+| --- | --- | --- | --- |
+| legacy six-field v1 | 0.2.x | decoded through an explicit legacy structure | header only |
+| extended v1 | 0.3.x | accepted for backward compatibility | header only |
+| v2 | 0.4.0+ | current write format | fields listed below |
 
-### Plaintext Length
+Version 1 remains readable, but its plaintext length, nonces, metadata,
+content type, public label, and workflow fields are not included in the AEAD
+commitment. Decrypt and re-encrypt with 0.4.0 or later to migrate to v2. This
+is reader compatibility, not a promise that older binaries can read v2 files.
 
-`plaintext_len` is public metadata containing the original plaintext length in bytes. It is checked after decryption so whole-chunk truncation cannot silently produce a shorter plaintext.
+## Version 2 payload commitment
 
-### KDF Parameters
+For v2, `aad_hash` is SHA-256 over the domain separator
+`"Lvau payload AAD v2\0"` followed by the postcard encoding of:
 
-```rust
-pub enum KdfParams {
-    Argon2id {
-        m_cost: u32,
-        t_cost: u32,
-        p_cost: u32,
-        salt: [u8; 16],
-    },
-}
-```
+- the complete `EnvelopeHeader`;
+- `plaintext_len`;
+- the XChaCha base nonce and optional AES base nonce;
+- `metadata`;
+- `content_type`;
+- `public_label`; and
+- `policy_overridden`.
 
-The salt is generated with `OsRng` for each encryption.
+The reader recomputes this value before decryption. Every AEAD payload frame
+uses `aad_hash || chunk_index_le_u64` as additional authenticated data. Thus a
+successful v2 decryption authenticates the committed public fields, frame
+position, and payload.
 
-| Profile | `m_cost` | `t_cost` | `p_cost` |
-| --- | ---: | ---: | ---: |
-| `Fast` | 16384 | 1 | 1 |
-| `Balanced` | 65536 | 2 | 1 |
-| `Archive` | 262144 | 3 | 2 |
-| `Paranoid` | 1048576 | 4 | 4 |
-| `Extreme` | 1048576 | 4 | 4 |
+The following workflow annotations are deliberately outside the payload AAD:
+`signature`, `approvals`, `release_metadata`, and `recovery_metadata`. An
+author signature or approval created after those fields are attached may cover
+them, but their mere presence is not authentication. Consumers must verify the
+relevant signature with an independently trusted public key.
 
-### Nonces
+For v1, `aad_hash` is SHA-256 of only the postcard-encoded header. Preflight
+reports a warning for this weaker legacy binding.
 
-- `nonce`: 24-byte XChaCha20-Poly1305 base nonce.
-- `secondary_nonce`: 12-byte AES-GCM base nonce for cascade profiles.
+## Payload frames and nonces
 
-For each 1 MiB chunk, Lvau derives a chunk nonce by XORing the little-endian chunk index into the first four bytes of the base nonce.
+Payloads are divided into 1 MiB chunks and processed in batches of at most 32
+chunks. For each global `u64` chunk index, its little-endian bytes are XORed
+into the first eight bytes of each applicable base nonce. The index is also
+included in AAD, preventing frame reordering or reuse at another position.
 
-### Ciphertext Layout
-
-Payloads are split into 1 MiB chunks.
-
-| Algorithm | Profile | Per-chunk overhead |
+| Algorithm | Profiles | Per-frame authentication overhead |
 | --- | --- | ---: |
 | `XChaCha20Poly1305` | `fast`, `balanced`, `archive` | 16 bytes |
 | `CascadeAesGcmXChaCha` | `paranoid` | 32 bytes |
 | `TripleCascadeAesXChaChaLco` | `extreme` | 32 bytes |
 
-Each chunk is independently authenticated. The AAD for each chunk consists of the header `aad_hash` appended with the 64-bit little-endian global chunk index. This prevents chunk reordering or swapping.
+Cascade and LCO profiles are experimental. LCO is reversible obfuscation and
+is not an additional cryptographic security boundary.
 
-### Recipients
+V2 represents an empty plaintext with one authenticated empty frame. The v2
+reader rejects truncated frames, a plaintext-length mismatch, and ciphertext
+bytes after the expected final frame. V1 empty capsules without a frame remain
+accepted for compatibility.
 
-```rust
-pub enum Recipient {
-    Password {
-        nonce: [u8; 24],
-        encrypted_file_key: Vec<u8>,
-    },
-    X25519MlkemHybrid {
-        ephemeral_public_x25519: [u8; 32],
-        mlkem_ciphertext: Vec<u8>,
-        encrypted_file_key: Vec<u8>,
-    },
-}
-```
+## Password KDF and file-key wrapping
 
-`Password` indicates password-derived encryption where the FEK (File Encryption Key) is wrapped with XChaCha20-Poly1305. `X25519MlkemHybrid` is experimental and combines X25519 and ML-KEM-768 shared secrets through HKDF.
+Password encryption derives a 32-byte wrapping key with Argon2id v1.3 and a
+random 16-byte salt, then wraps a random 32-byte file-encryption key with
+XChaCha20-Poly1305. The wrapped key is exactly 48 bytes.
 
-## Content Types (v0.3.0)
+| Profile | `m_cost` KiB | `t_cost` | `p_cost` |
+| --- | ---: | ---: | ---: |
+| `fast` | 16,384 | 1 | 1 |
+| `balanced` | 65,536 | 2 | 1 |
+| `archive` | 262,144 | 3 | 2 |
+| `paranoid` | 1,048,576 | 4 | 4 |
+| `extreme` | 1,048,576 | 4 | 4 |
 
-```rust
-pub enum ContentType {
-    SingleFile,
-    Bundle,
-}
-```
+The salt and all nonces are generated from the operating-system RNG for each
+new encryption. New encryptions reject an empty password or structured-secret
+seed.
 
-- `SingleFile`: The payload is a single encrypted file (default for v0.2.x compatibility).
-- `Bundle`: The payload is a serialized bundle containing a manifest and multiple files.
+## Hybrid recipients
 
-### Bundle Payload Format
+`X25519MlkemHybrid` recipient slots contain an ephemeral X25519 public key, an
+ML-KEM-768 ciphertext, and a 48-byte wrapped file key. The two shared secrets
+are combined using HKDF-SHA256 before file-key unwrapping. Decryption tries all
+compatible recipient slots instead of assuming the first slot belongs to the
+provided key. This mode is experimental and is not a substitute for an
+independent security review.
 
-When `content_type` is `Bundle`, the encrypted payload has the following structure:
+## Bundle payload
 
-1. A postcard-serialized `BundleManifest` (length-prefixed).
-2. Concatenated file contents in manifest order.
+For `ContentType::Bundle`, the decrypted bytes contain:
 
-```rust
-pub struct BundleManifest {
-    pub entries: Vec<BundleEntry>,
-    pub created_at: Option<String>,
-    pub tool_version: Option<String>,
-}
+1. a four-byte little-endian manifest length;
+2. exactly one postcard-encoded `BundleManifest`; and
+3. file contents at the offsets declared by the manifest, with optional
+   padding introduced by the selected padding profile.
 
-pub struct BundleEntry {
-    pub relative_path: String,
-    pub size: u64,
-    pub blake3_hash: [u8; 32],
-    pub offset: u64,
-}
-```
+Each entry has a portable relative path, `u64` size and offset, and BLAKE3
+content hash. Before extraction, the reader validates every manifest entry,
+including integer overflow, bounds, overlapping non-empty ranges, duplicate or
+case-colliding paths, absolute paths, parent traversal, and content hashes.
+Symlinks in the source are rejected unless explicitly allowed. Extraction
+checks that resolved parents remain inside the destination and refuses existing
+outputs unless `--force` is used. Even with `--force`, an existing
+symlink/reparse point, non-regular file, or file with multiple hard links is
+rejected rather than truncated. The current manifest represents regular files
+only and never creates symlinks or hardlinks.
 
-The entire bundle payload (manifest + file contents) is encrypted as a single payload using the same chunk-based AEAD as single-file encryption.
+Unlike ordinary single-file encryption, current bundle packing, listing,
+verification, and extraction use a complete decrypted bundle buffer. This is a
+known scalability limitation; do not assume constant memory for large bundles.
 
-## Signatures (v0.3.0)
+## Author signatures and approvals
 
-```rust
-pub struct EnvelopeSignature {
-    pub signer_fingerprint: [u8; 32],
-    pub signature: Vec<u8>,  // 64-byte Ed25519 signature
-    pub created_at: Option<String>,
-    pub comment: Option<String>,
-}
-```
+V2 author signatures use Ed25519 and a versioned domain separator. They cover
+the envelope (with the signature bytes cleared and approvals removed) plus all
+ciphertext, including the stored signer fingerprint, timestamp, and comment.
+Approvals are independent so they can be appended without invalidating an
+author signature.
 
-### Signing process
+A v2 approval covers the public envelope with all approvals removed, all
+ciphertext, the approving-key fingerprint, and its comment. V1 author and
+approval verification retain the historical statement for compatibility; v1
+approvals cover only `aad_hash` and therefore provide weaker evidence.
 
-1. Serialize the envelope without the `signature` field.
-2. Concatenate the serialized envelope bytes with all ciphertext bytes.
-3. Sign the concatenated bytes with the Ed25519 signing key.
-4. Store the signature in the `signature` field.
-5. Re-serialize the envelope with the signature.
+Neither an author signature nor an approval establishes identity or trust on
+its own. Verification must use a public key obtained through a trusted channel.
+Approval count is advisory metadata and does not gate decryption.
 
-### Verification process
+## Public information
 
-1. Read the envelope and extract the signature.
-2. Set the `signature` field to `None`.
-3. Re-serialize the envelope without the signature.
-4. Concatenate with all ciphertext bytes.
-5. Verify the Ed25519 signature against the concatenated bytes.
+The envelope length and envelope fields are public. Depending on the capsule,
+this reveals the format version, algorithm, profile, KDF costs and salt,
+recipient count and recipient encapsulation data, base nonces, plaintext
+length, ciphertext length, optional public label, and workflow annotations.
+Bundle paths and contents are inside the encrypted payload unless the user
+copies them into a public label or other public metadata.
 
-Verification does not require the decryption password or private key.
+## Change policy
 
-> **Note**: Ed25519 signatures and AEAD authentication serve different purposes. See [THREAT_MODEL.md](THREAT_MODEL.md) for details.
-
-## Compatibility Policy
-
-Before v1.0, forward compatibility is not guaranteed. Breaking format changes must:
-
-- update this document,
-- update tests,
-- be recorded in `CHANGELOG.md`,
-- keep the version field meaningful for future migration.
-
-After v1.0, format compatibility should follow semantic versioning.
-
-### v0.2.x → v0.3.0 Compatibility
-
-- v0.3.0 can read v0.2.x files. New `Option` fields default to `None`.
-- v0.2.x cannot read v0.3.0 files that use new fields (they will fail at deserialization).
-- The `version` field remains `1` for now. A version bump to `2` is reserved for truly breaking changes.
-
-## Security Notes
-
-- Lvau does not use custom ciphers as a security boundary.
-- The `extreme` profile includes LCO obfuscation. LCO is not a cryptographic security boundary.
-- Public metadata includes algorithm, profile, KDF parameters, recipients, nonce values, ciphertext length, and plaintext length.
-- Bundle mode does not expose internal file names or directory structure in public metadata by default.
-- Signatures use Ed25519 from the `ed25519-dalek` crate.
+Before 1.0, forward compatibility is not guaranteed. Any format change must
+update the version, decoder bounds, compatibility tests, this document, and
+`CHANGELOG.md`. A new writer must not silently reinterpret existing version
+numbers. Security fixes may require a new format version even when the CLI
+remains source-compatible.
