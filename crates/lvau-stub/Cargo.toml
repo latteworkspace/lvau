@@ -7,4 +7,4 @@ edition = "2021"
 lvau-core = { path = "../lvau-core" }
 eframe = "0.29.1"
 rfd = "0.15"
-secrecy = "0.8"
+secrecy = "0.10"
