@@ -1,0 +1,41 @@
+name: v0.5.0 CI Fix
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v050-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: github.head_ref == 'feat/v0.5.0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: feat/v0.5.0
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: rustfmt
+      - name: Apply corrections
+        run: python3 scripts/v050_fix_ci.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Commit corrections
+        run: |
+          if git diff --quiet; then
+            echo "Corrections already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates
+          git commit -m "fix(v0.5.0): satisfy clippy and JSON contract tests"
+          git push origin HEAD:feat/v0.5.0
