@@ -5,10 +5,7 @@ use super::CryptoError;
 /// Derive the per-chunk XChaCha nonce used by format v2.
 pub fn xchacha_nonce(base: &[u8; 24], chunk_index: u64) -> [u8; 24] {
     let mut nonce = *base;
-    for (slot, index_byte) in nonce[..8]
-        .iter_mut()
-        .zip(chunk_index.to_le_bytes())
-    {
+    for (slot, index_byte) in nonce[..8].iter_mut().zip(chunk_index.to_le_bytes()) {
         *slot ^= index_byte;
     }
     nonce
@@ -17,10 +14,7 @@ pub fn xchacha_nonce(base: &[u8; 24], chunk_index: u64) -> [u8; 24] {
 /// Derive the per-chunk AES nonce used by format v2 cascade suites.
 pub fn aes_nonce(base: &[u8; 12], chunk_index: u64) -> [u8; 12] {
     let mut nonce = *base;
-    for (slot, index_byte) in nonce[..8]
-        .iter_mut()
-        .zip(chunk_index.to_le_bytes())
-    {
+    for (slot, index_byte) in nonce[..8].iter_mut().zip(chunk_index.to_le_bytes()) {
         *slot ^= index_byte;
     }
     nonce

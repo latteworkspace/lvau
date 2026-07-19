@@ -419,7 +419,7 @@ mod tests {
     use super::*;
     use crate::crypto::encrypt_file_password;
     use lvau_protocol::envelope::SecurityProfile;
-    use secrecy::Secret;
+    use secrecy::SecretString;
     use tempfile::tempdir;
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -463,7 +463,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -498,7 +498,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -527,7 +527,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -583,7 +583,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -630,7 +630,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -658,7 +658,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -693,7 +693,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,
@@ -730,7 +730,7 @@ mod tests {
         encrypt_file_password(
             &input,
             &encrypted,
-            Secret::new("password".to_string()),
+            SecretString::from("password".to_string()),
             None,
             SecurityProfile::Fast,
             None,

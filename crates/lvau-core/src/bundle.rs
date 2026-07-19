@@ -7,7 +7,7 @@
 
 use crate::crypto::{decrypt_file_password, CryptoError};
 use lvau_protocol::envelope::{BundleEntry, BundleManifest, ContentType, EnvelopeHeader};
-use secrecy::Secret;
+use secrecy::SecretString;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -306,10 +306,7 @@ pub fn inspect_bundle(
 }
 
 /// List files in a bundle (requires password to decrypt the manifest).
-pub fn list_bundle(
-    in_file: &Path,
-    password: Secret<String>,
-) -> Result<BundleManifest, BundleError> {
+pub fn list_bundle(in_file: &Path, password: SecretString) -> Result<BundleManifest, BundleError> {
     // Decrypt to memory
     let temp_dir = tempdir().map_err(BundleError::Io)?;
     let temp_plain_path = temp_dir.path().join("payload.tmp");
@@ -498,7 +495,7 @@ fn open_extraction_target(path: &Path, force: bool) -> Result<File, BundleError>
 pub fn extract_bundle(
     in_file: &Path,
     out_dir: &Path,
-    password: Secret<String>,
+    password: SecretString,
     _allow_symlinks: bool,
     force: bool,
     dry_run: bool,
@@ -585,7 +582,7 @@ pub fn extract_bundle(
 /// Verify a bundle's integrity without extracting.
 pub fn verify_bundle(
     in_file: &Path,
-    password: Secret<String>,
+    password: SecretString,
 ) -> Result<BundleManifest, BundleError> {
     let temp_dir = tempdir().map_err(BundleError::Io)?;
     let temp_plain_path = temp_dir.path().join("payload.tmp");
@@ -616,8 +613,8 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn test_password() -> Secret<String> {
-        Secret::new("test-bundle-password".to_string())
+    fn test_password() -> SecretString {
+        SecretString::from("test-bundle-password".to_string())
     }
 
     #[test]
@@ -800,7 +797,7 @@ mod tests {
         let result = extract_bundle(
             &out_file,
             &out_dir,
-            Secret::new("wrong-password".to_string()),
+            SecretString::from("wrong-password".to_string()),
             false,
             false,
             false,

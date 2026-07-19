@@ -15,7 +15,7 @@ use lvau_core::signing::{
 };
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::fmt;
 use std::fs;
@@ -758,9 +758,9 @@ fn password_secret(
     password: bool,
     password_file: Option<&Path>,
     confirm: bool,
-) -> Result<Option<Secret<String>>, CliError> {
+) -> Result<Option<SecretString>, CliError> {
     if let Some(path) = password_file {
-        return Ok(Some(Secret::new(read_secret_file(path)?)));
+        return Ok(Some(SecretString::from(read_secret_file(path)?)));
     }
 
     if !password {
@@ -774,16 +774,18 @@ fn password_secret(
             return Err(CliError::Message("Passwords do not match".to_string()));
         }
     }
-    Ok(Some(Secret::new(first)))
+    Ok(Some(SecretString::from(first)))
 }
 
-fn seed_secret(seed: bool, seed_file: Option<&Path>) -> Result<Option<Secret<String>>, CliError> {
+fn seed_secret(seed: bool, seed_file: Option<&Path>) -> Result<Option<SecretString>, CliError> {
     if let Some(path) = seed_file {
-        return Ok(Some(Secret::new(read_secret_file(path)?)));
+        return Ok(Some(SecretString::from(read_secret_file(path)?)));
     }
 
     if seed {
-        return Ok(Some(Secret::new(prompt_password("Enter seed (pepper): ")?)));
+        return Ok(Some(SecretString::from(prompt_password(
+            "Enter seed (pepper): ",
+        )?)));
     }
 
     Ok(None)
@@ -1968,11 +1970,11 @@ fn run() -> Result<(), CliError> {
                     in_file.extension().and_then(|e| e.to_str()).unwrap_or("")
                 ));
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password for secret: ")
                         .map_err(CliError::Io)?,
                 );
-                let confirm = Secret::new(
+                let confirm = SecretString::from(
                     rpassword::prompt_password("Confirm password: ").map_err(CliError::Io)?,
                 );
                 if pwd.expose_secret() != confirm.expose_secret() {
@@ -2009,7 +2011,7 @@ fn run() -> Result<(), CliError> {
                 let out_file = in_file.with_extension("");
                 ensure_output_available(&out_file, false)?;
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to decrypt: ")
                         .map_err(CliError::Io)?,
                 );
@@ -2021,7 +2023,7 @@ fn run() -> Result<(), CliError> {
             SecretAction::Edit { in_file } => {
                 ensure_input_file(&in_file)?;
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to edit: ").map_err(CliError::Io)?,
                 );
 
@@ -2073,7 +2075,7 @@ fn run() -> Result<(), CliError> {
             }
             SecretAction::Print { in_file } => {
                 ensure_input_file(&in_file)?;
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to print: ")
                         .map_err(CliError::Io)?,
                 );
@@ -2249,7 +2251,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2259,7 +2261,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 None,
             )?;
@@ -2289,7 +2291,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2299,7 +2301,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("wrongpass".into()),
+                SecretString::from("wrongpass".into()),
                 None,
                 None,
             );
@@ -2328,7 +2330,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2346,7 +2348,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 None,
             );
@@ -2377,7 +2379,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2387,7 +2389,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".into()),
                 None,
                 None,
             )?;

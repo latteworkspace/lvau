@@ -3,7 +3,7 @@ use super::parallel::CHUNK_SIZE;
 use super::*;
 use base64::Engine;
 use lvau_protocol::envelope::Envelope;
-use secrecy::Secret;
+use secrecy::SecretString;
 use sha2::{Digest, Sha256};
 use std::env::temp_dir;
 use std::fs;
@@ -21,7 +21,7 @@ fn roundtrip_bytes(name: &str, bytes: &[u8]) {
     let input = unique_path(&format!("{name}.input"));
     let enc = unique_path(&format!("{name}.lvau"));
     let dec = unique_path(&format!("{name}.output"));
-    let password = Secret::new("correct horse battery staple".to_string());
+    let password = SecretString::from("correct horse battery staple".to_string());
 
     fs::write(&input, bytes).unwrap();
     let original_hash = Sha256::digest(bytes);
@@ -83,7 +83,7 @@ fn wrong_password_fails() {
     encrypt_file_password(
         &input,
         &enc,
-        Secret::new("correct-password".to_string()),
+        SecretString::from("correct-password".to_string()),
         None,
         SecurityProfile::Fast,
         None,
@@ -95,7 +95,7 @@ fn wrong_password_fails() {
     let result = decrypt_file_password(
         &enc,
         &dec,
-        Secret::new("wrong-password".to_string()),
+        SecretString::from("wrong-password".to_string()),
         None,
         None,
     );
@@ -108,7 +108,7 @@ fn modified_ciphertext_fails() {
     let input = unique_path("tamper-ciphertext.input");
     let enc = unique_path("tamper-ciphertext.lvau");
     let dec = unique_path("tamper-ciphertext.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
 
     fs::write(&input, b"Data to be tampered").unwrap();
     encrypt_file_password(
@@ -136,7 +136,7 @@ fn modified_header_aad_fails() {
     let input = unique_path("tamper-header.input");
     let enc = unique_path("tamper-header.lvau");
     let dec = unique_path("tamper-header.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
 
     fs::write(&input, b"header-bound data").unwrap();
     encrypt_file_password(
@@ -176,7 +176,7 @@ fn truncated_file_fails() {
     let input = unique_path("truncated.input");
     let enc = unique_path("truncated.lvau");
     let dec = unique_path("truncated.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
     let bytes: Vec<u8> = (0..(CHUNK_SIZE * 2 + 11))
         .map(|i| (i % 251) as u8)
         .collect();
@@ -211,7 +211,7 @@ fn empty_password_cannot_create_a_capsule() {
     let result = encrypt_file_password(
         &input,
         &enc,
-        Secret::new(String::new()),
+        SecretString::from(String::new()),
         None,
         SecurityProfile::Fast,
         None,
@@ -229,7 +229,7 @@ fn failed_decryption_removes_partial_plaintext_tempfile() {
     let input = dir.path().join("input.bin");
     let enc = dir.path().join("encrypted.lvau");
     let output = dir.path().join("output.bin");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
 
     fs::write(&input, b"data that will fail authentication").unwrap();
     encrypt_file_password(
@@ -266,7 +266,7 @@ fn declared_length_cannot_authenticate_a_valid_ciphertext_prefix() {
     let input = unique_path("declared-length-prefix.input");
     let enc = unique_path("declared-length-prefix.lvau");
     let dec = unique_path("declared-length-prefix.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
     let bytes: Vec<u8> = (0..(CHUNK_SIZE * 2 + 17))
         .map(|i| (i % 251) as u8)
         .collect();
@@ -308,7 +308,7 @@ fn empty_payload_still_authenticates_immutable_envelope_fields() {
     let input = unique_path("empty-envelope.input");
     let enc = unique_path("empty-envelope.lvau");
     let dec = unique_path("empty-envelope.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
 
     fs::write(&input, []).unwrap();
     encrypt_file_password(
@@ -347,7 +347,7 @@ fn trailing_ciphertext_is_rejected() {
     let input = unique_path("trailing-ciphertext.input");
     let enc = unique_path("trailing-ciphertext.lvau");
     let dec = unique_path("trailing-ciphertext.output");
-    let password = Secret::new("password123".to_string());
+    let password = SecretString::from("password123".to_string());
 
     fs::write(&input, b"authenticated payload").unwrap();
     encrypt_file_password(
@@ -379,7 +379,7 @@ fn random_garbage_input_fails_gracefully() {
     let result = decrypt_file_password(
         &enc,
         &dec,
-        Secret::new("password123".to_string()),
+        SecretString::from("password123".to_string()),
         None,
         None,
     );
@@ -397,7 +397,7 @@ fn inspect_works_without_password() {
     encrypt_file_password(
         &input,
         &enc,
-        Secret::new("password123".to_string()),
+        SecretString::from("password123".to_string()),
         None,
         SecurityProfile::Fast,
         None,
@@ -475,7 +475,7 @@ fn v030_release_binary_fixture_decrypts() {
     decrypt_file_password(
         &encrypted,
         &decrypted,
-        Secret::new("synthetic-v0.3-fixture-password".to_string()),
+        SecretString::from("synthetic-v0.3-fixture-password".to_string()),
         None,
         None,
     )
@@ -556,8 +556,8 @@ fn paranoid_profile_with_seed_roundtrips_and_rejects_wrong_seed() {
 
     fs::write(&input, b"Top secret cascaded data").unwrap();
 
-    let password = Secret::new("top_secret_password".to_string());
-    let seed = Secret::new("my_random_seed_123".to_string());
+    let password = SecretString::from("top_secret_password".to_string());
+    let seed = SecretString::from("my_random_seed_123".to_string());
 
     encrypt_file_password(
         &input,
@@ -578,7 +578,7 @@ fn paranoid_profile_with_seed_roundtrips_and_rejects_wrong_seed() {
         &enc,
         &dec_wrong,
         password,
-        Some(Secret::new("wrong_seed".to_string())),
+        Some(SecretString::from("wrong_seed".to_string())),
         None,
     );
     assert!(result.is_err());
@@ -657,7 +657,7 @@ fn corrupt_magic_bytes_fails() {
     encrypt_file_password(
         &input,
         &enc,
-        Secret::new("password".to_string()),
+        SecretString::from("password".to_string()),
         None,
         SecurityProfile::Fast,
         None,
@@ -682,7 +682,13 @@ fn corrupt_magic_bytes_fails() {
         fs::write(&enc, new_data).unwrap();
     }
 
-    let result = decrypt_file_password(&enc, &dec, Secret::new("password".to_string()), None, None);
+    let result = decrypt_file_password(
+        &enc,
+        &dec,
+        SecretString::from("password".to_string()),
+        None,
+        None,
+    );
     assert!(matches!(result, Err(CryptoError::Validation(_))));
 }
 
@@ -696,7 +702,7 @@ fn corrupt_version_fails() {
     encrypt_file_password(
         &input,
         &enc,
-        Secret::new("password".to_string()),
+        SecretString::from("password".to_string()),
         None,
         SecurityProfile::Fast,
         None,
@@ -721,7 +727,13 @@ fn corrupt_version_fails() {
         fs::write(&enc, new_data).unwrap();
     }
 
-    let result = decrypt_file_password(&enc, &dec, Secret::new("password".to_string()), None, None);
+    let result = decrypt_file_password(
+        &enc,
+        &dec,
+        SecretString::from("password".to_string()),
+        None,
+        None,
+    );
     assert!(matches!(result, Err(CryptoError::Validation(_))));
 }
 

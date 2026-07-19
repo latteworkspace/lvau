@@ -3,7 +3,7 @@ use crate::crypto::{verify_file_keypair, verify_file_password};
 use crate::policy::CapsulePolicy;
 use crate::preflight::{run_preflight, PreflightResult};
 use ed25519_dalek::VerifyingKey;
-use secrecy::Secret;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -17,7 +17,7 @@ pub struct FullReport {
 }
 
 pub enum DecryptCredential {
-    Password(Secret<String>, Option<Secret<String>>),
+    Password(SecretString, Option<SecretString>),
     Keypair(crate::crypto::keys::HybridPrivateKey),
 }
 

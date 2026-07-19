@@ -2,7 +2,6 @@ use base64::Engine;
 use kem::Kem as KemTrait;
 use kem::KeyExport;
 use ml_kem::{DecapsulationKey768, EncapsulationKey768, MlKem768};
-use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -150,9 +149,7 @@ fn write_key_file<P: AsRef<Path>>(
 }
 
 pub fn generate_keypair() -> (HybridPrivateKey, HybridPublicKey) {
-    let rng = OsRng;
-
-    let x25519_priv = StaticSecret::random_from_rng(rng);
+    let x25519_priv = StaticSecret::random();
     let x25519_pub = X25519PublicKey::from(&x25519_priv);
 
     let (mlkem_priv, mlkem_pub) = Kem::generate_keypair();
