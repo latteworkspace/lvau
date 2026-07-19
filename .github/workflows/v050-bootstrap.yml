@@ -1,23 +1,21 @@
 name: v0.5.0 Bootstrap
 
 on:
-  push:
+  pull_request:
     branches:
-      - feat/v0.5.0
-    paths:
-      - scripts/v050_migrate.py
-      - .github/workflows/v050-bootstrap.yml
+      - master
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: v050-bootstrap
+  group: v050-bootstrap-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   migrate:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/v0.5.0'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
