@@ -34,6 +34,13 @@ def migrate_rust_sources() -> None:
     ]
     for path in ROOT.joinpath("crates").rglob("*.rs"):
         replace(path, substitutions)
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(
+            r'SecretString::from\(("(?:[^"\\]|\\.)*")\.into\(\)\)',
+            r'SecretString::from(\1.to_string())',
+            text,
+        )
+        path.write_text(text, encoding="utf-8")
 
     keys = ROOT / "crates/lvau-core/src/crypto/keys.rs"
     text = keys.read_text(encoding="utf-8")
