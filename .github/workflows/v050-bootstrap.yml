@@ -23,24 +23,25 @@ jobs:
           ref: feat/v0.5.0
           persist-credentials: true
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-      - name: Apply source migration
+      - name: Apply v0.5.0 transformations
         run: |
           python3 scripts/v050_migrate.py
           python3 scripts/v050_crypto_refactor.py
+          python3 scripts/v050_docs.py
       - name: Format
         run: cargo fmt --all
       - name: Refresh lockfile
         run: cargo update -w
-      - name: Commit generated migration
+      - name: Commit generated changes
         run: |
           if git diff --quiet; then
-            echo "Migration already applied"
+            echo "Transformations already applied"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock crates
-          git commit -m "refactor(v0.5.0): apply compatibility-preserving migrations"
+          git add -A
+          git commit -m "feat(v0.5.0): finalize implementation and release docs"
           git push origin HEAD:feat/v0.5.0
       - name: Check workspace
         id: check
