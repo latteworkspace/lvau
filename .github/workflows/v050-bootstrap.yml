@@ -41,4 +41,19 @@ jobs:
           git commit -m "refactor(v0.5.0): migrate dependency APIs and versions"
           git push origin HEAD:feat/v0.5.0
       - name: Check workspace
-        run: cargo check --workspace --all-targets --all-features
+        id: check
+        continue-on-error: true
+        run: cargo check --workspace --all-targets --all-features --message-format=short > v050-check.log 2>&1
+      - name: Upload compiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: v050-check-${{ github.run_id }}
+          path: v050-check.log
+          if-no-files-found: error
+          retention-days: 2
+      - name: Propagate check failure
+        if: steps.check.outcome == 'failure'
+        run: |
+          cat v050-check.log
+          exit 1
