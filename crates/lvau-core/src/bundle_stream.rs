@@ -325,7 +325,10 @@ fn validate_layout(
     Ok(())
 }
 
-fn decrypt_and_open(in_file: &Path, password: SecretString) -> Result<DecryptedBundle, BundleError> {
+fn decrypt_and_open(
+    in_file: &Path,
+    password: SecretString,
+) -> Result<DecryptedBundle, BundleError> {
     let temp_dir = tempdir()?;
     let plaintext_path = temp_dir.path().join("bundle.payload");
     decrypt_file_password(in_file, &plaintext_path, password, None, None)?;
@@ -367,11 +370,7 @@ fn decrypt_and_open(in_file: &Path, password: SecretString) -> Result<DecryptedB
     })
 }
 
-fn verify_entry(
-    file: &mut File,
-    data_start: u64,
-    entry: &BundleEntry,
-) -> Result<(), BundleError> {
+fn verify_entry(file: &mut File, data_start: u64, entry: &BundleEntry) -> Result<(), BundleError> {
     let start = data_start
         .checked_add(entry.offset)
         .ok_or_else(|| BundleError::ManifestError("File offset overflow".into()))?;
@@ -397,10 +396,7 @@ fn verify_all(bundle: &mut DecryptedBundle) -> Result<(), BundleError> {
 }
 
 /// List and authenticate every entry while retaining only the manifest in memory.
-pub fn list_bundle(
-    in_file: &Path,
-    password: SecretString,
-) -> Result<BundleManifest, BundleError> {
+pub fn list_bundle(in_file: &Path, password: SecretString) -> Result<BundleManifest, BundleError> {
     let mut bundle = decrypt_and_open(in_file, password)?;
     verify_all(&mut bundle)?;
     Ok(bundle.manifest)
@@ -501,7 +497,11 @@ pub fn extract_bundle(
 
     if dry_run {
         for entry in &bundle.manifest.entries {
-            log::info!("Would extract: {} ({} bytes)", entry.relative_path, entry.size);
+            log::info!(
+                "Would extract: {} ({} bytes)",
+                entry.relative_path,
+                entry.size
+            );
         }
         return Ok(bundle.manifest);
     }
@@ -600,6 +600,9 @@ mod tests {
         )
         .unwrap();
         extract_bundle(&encrypted, &output, password(), false, false, false).unwrap();
-        assert_eq!(fs::metadata(file).unwrap().len(), fs::metadata(output.join("large.bin")).unwrap().len());
+        assert_eq!(
+            fs::metadata(file).unwrap().len(),
+            fs::metadata(output.join("large.bin")).unwrap().len()
+        );
     }
 }

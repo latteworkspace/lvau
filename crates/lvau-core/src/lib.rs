@@ -1,4 +1,5 @@
 pub mod bundle;
+mod bundle_stream;
 pub mod crypto;
 pub mod diff;
 pub mod groups;
