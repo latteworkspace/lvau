@@ -1,0 +1,44 @@
+name: v0.5.0 Bootstrap
+
+on:
+  push:
+    branches:
+      - feat/v0.5.0
+    paths:
+      - scripts/v050_migrate.py
+      - .github/workflows/v050-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v050-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: feat/v0.5.0
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - name: Apply source migration
+        run: python3 scripts/v050_migrate.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Refresh lockfile and check workspace
+        run: cargo check --workspace --all-targets --all-features
+      - name: Commit generated migration
+        run: |
+          if git diff --quiet; then
+            echo "Migration already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock crates
+          git commit -m "refactor(v0.5.0): migrate dependency APIs and versions"
+          git push origin HEAD:feat/v0.5.0
