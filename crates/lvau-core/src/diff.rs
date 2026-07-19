@@ -1,6 +1,6 @@
 use crate::bundle::{list_bundle, BundleError};
 use lvau_protocol::envelope::BundleManifest;
-use secrecy::Secret;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,9 +33,9 @@ pub struct DiffReport {
 /// Diff two encrypted bundles.
 pub fn diff_bundles(
     old_file: &Path,
-    old_password: Secret<String>,
+    old_password: SecretString,
     new_file: &Path,
-    new_password: Secret<String>,
+    new_password: SecretString,
 ) -> Result<DiffReport, BundleError> {
     let old_manifest = list_bundle(old_file, old_password)?;
     let new_manifest = list_bundle(new_file, new_password)?;

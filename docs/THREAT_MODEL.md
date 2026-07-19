@@ -55,9 +55,10 @@ before writing file data.
   features are experimental. LCO is obfuscation, not another cipher.
 - Ed25519 and X25519 are not post-quantum. The hybrid recipient mode includes
   ML-KEM-768 but has not been independently reviewed as an integrated design.
-- Bundle operations currently buffer the complete decrypted bundle. A local
-  filesystem race can still occur between path validation and creation; use a
-  fresh destination owned by the decrypting user.
+- Bundle file contents use bounded streaming buffers, but the authenticated
+  manifest is held in memory up to the documented 16 MiB limit. A local filesystem
+  race can still occur while creating parent directories; use a fresh destination
+  owned by the decrypting user.
 - Lvau does not provide plausible deniability, steganography, full-disk
   encryption, filesystem mounting, secure deletion, rollback protection, or a
   network transport protocol.

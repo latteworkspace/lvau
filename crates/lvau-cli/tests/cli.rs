@@ -132,8 +132,11 @@ fn inspect_json_output_is_valid() {
 
     let json_str = String::from_utf8(output).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-    assert_eq!(parsed["magic"], "LVAU");
-    assert_eq!(parsed["signed"], false);
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["command"], "inspect");
+    assert_eq!(parsed["status"], "ok");
+    assert_eq!(parsed["data"]["magic"], "LVAU");
+    assert_eq!(parsed["data"]["signed"], false);
 }
 
 #[test]

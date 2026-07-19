@@ -8,7 +8,7 @@ use lvau_core::crypto::{
 };
 use lvau_core::preflight::run_preflight;
 use lvau_protocol::envelope::SecurityProfile;
-use secrecy::Secret;
+use secrecy::SecretString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -276,11 +276,11 @@ fn run_crypto(
     };
     let result = match credential {
         Credential::Password { password, seed } => {
-            let password = Secret::new(password);
+            let password = SecretString::from(password);
             let seed = if seed.is_empty() {
                 None
             } else {
-                Some(Secret::new(seed))
+                Some(SecretString::from(seed))
             };
             if mode == OperationMode::Encrypt {
                 encrypt_file_password(

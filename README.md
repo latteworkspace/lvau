@@ -2,7 +2,7 @@
 
 > Inspectable encrypted capsules for local files and developer workflows.
 
-Lvau is a Rust workspace containing a CLI, native GUI, crypto library, versioned `.lvau` protocol, and an experimental self-extracting stub. The current release is **0.4.0**.
+Lvau is a Rust workspace containing a CLI, native GUI, crypto library, versioned `.lvau` protocol, and an experimental self-extracting stub. The current release is **0.5.0**.
 
 English | [日本語](README_ja.md)
 
@@ -30,6 +30,17 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 ```
 
 On Windows, restrict the file ACL to the account running Lvau. Password-file ACLs are not automatically validated there. Never commit password or seed files.
+
+## 0.5.0 changes
+
+- Directory bundles now stream file contents through a fixed 64 KiB buffer instead of collecting the complete plaintext payload in memory. The encrypted payload layout remains format-v2 compatible.
+- Pack performs two-pass size/BLAKE3 validation, and extract authenticates all entries before atomically creating named outputs.
+- Existing v2 HKDF labels, nonce derivation, and chunk AAD are centralized behind a versioned suite registry with fixed compatibility vectors.
+- `secrecy` 0.10 and `x25519-dalek` 3 migrations are complete.
+- Machine-readable inspect, verify, preflight, report, and policy-lint output uses JSON schema version 1.
+- Lvau still writes envelope v2 in this release; experimental format v3 is planned separately for 0.6.0.
+
+See [CHANGELOG.md](CHANGELOG.md), [the JSON contract](docs/JSON_OUTPUT.md), and [the roadmap](docs/ROADMAP.md) for details.
 
 ## 0.4.0 changes
 

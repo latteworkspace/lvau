@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use lvau_core::crypto::{decrypt_memory_keypair, decrypt_memory_password, keys::HybridPrivateKey};
-use secrecy::Secret;
+use secrecy::SecretString;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -150,11 +150,11 @@ impl eframe::App for SfxExtractorApp {
                 if let (Some(payload), Some(out_file)) = (&self.payload, &self.out_file) {
                     let result = match self.auth_mode {
                         AuthMode::Password => {
-                            let pwd = Secret::new(self.secret.clone());
+                            let pwd = SecretString::from(self.secret.clone());
                             let seed_val = if self.seed.is_empty() {
                                 None
                             } else {
-                                Some(Secret::new(self.seed.clone()))
+                                Some(SecretString::from(self.seed.clone()))
                             };
                             decrypt_memory_password(payload, pwd, seed_val)
                         }

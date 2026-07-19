@@ -7,13 +7,15 @@
 
 use crate::crypto::{decrypt_file_password, CryptoError};
 use lvau_protocol::envelope::{BundleEntry, BundleManifest, ContentType, EnvelopeHeader};
-use secrecy::Secret;
+use secrecy::SecretString;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use tempfile::{tempdir, NamedTempFile};
 use walkdir::WalkDir;
+
+pub use crate::bundle_stream::{extract_bundle, list_bundle, pack_directory, verify_bundle};
 
 /// Errors specific to bundle operations.
 #[derive(Debug, thiserror::Error)]
@@ -178,7 +180,8 @@ fn collect_files(
 
 /// Pack a directory into a single encrypted `.lvau` bundle file.
 #[allow(clippy::too_many_arguments)]
-pub fn pack_directory(
+#[allow(dead_code)]
+fn legacy_pack_directory(
     in_dir: &Path,
     out_file: &Path,
     credential: crate::crypto::EncryptCredential,
@@ -306,9 +309,10 @@ pub fn inspect_bundle(
 }
 
 /// List files in a bundle (requires password to decrypt the manifest).
-pub fn list_bundle(
+#[allow(dead_code)]
+fn legacy_list_bundle(
     in_file: &Path,
-    password: Secret<String>,
+    password: SecretString,
 ) -> Result<BundleManifest, BundleError> {
     // Decrypt to memory
     let temp_dir = tempdir().map_err(BundleError::Io)?;
@@ -495,10 +499,11 @@ fn open_extraction_target(path: &Path, force: bool) -> Result<File, BundleError>
 }
 
 /// Extract a bundle to a directory.
-pub fn extract_bundle(
+#[allow(dead_code)]
+fn legacy_extract_bundle(
     in_file: &Path,
     out_dir: &Path,
-    password: Secret<String>,
+    password: SecretString,
     _allow_symlinks: bool,
     force: bool,
     dry_run: bool,
@@ -583,9 +588,10 @@ pub fn extract_bundle(
 }
 
 /// Verify a bundle's integrity without extracting.
-pub fn verify_bundle(
+#[allow(dead_code)]
+fn legacy_verify_bundle(
     in_file: &Path,
-    password: Secret<String>,
+    password: SecretString,
 ) -> Result<BundleManifest, BundleError> {
     let temp_dir = tempdir().map_err(BundleError::Io)?;
     let temp_plain_path = temp_dir.path().join("payload.tmp");
@@ -616,8 +622,8 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn test_password() -> Secret<String> {
-        Secret::new("test-bundle-password".to_string())
+    fn test_password() -> SecretString {
+        SecretString::from("test-bundle-password".to_string())
     }
 
     #[test]
@@ -800,7 +806,7 @@ mod tests {
         let result = extract_bundle(
             &out_file,
             &out_dir,
-            Secret::new("wrong-password".to_string()),
+            SecretString::from("wrong-password".to_string()),
             false,
             false,
             false,

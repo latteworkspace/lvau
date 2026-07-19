@@ -1,3 +1,5 @@
+mod output;
+
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use lvau_core::bundle::{
@@ -15,7 +17,7 @@ use lvau_core::signing::{
 };
 use lvau_protocol::envelope::{KdfParams, Recipient, SecurityProfile};
 use rpassword::read_password;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::fmt;
 use std::fs;
@@ -705,6 +707,12 @@ impl From<std::io::Error> for CliError {
     }
 }
 
+impl From<serde_json::Error> for CliError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Message(format!("JSON serialization failed: {error}"))
+    }
+}
+
 impl From<lvau_core::crypto::CryptoError> for CliError {
     fn from(error: lvau_core::crypto::CryptoError) -> Self {
         Self::Crypto(error)
@@ -758,9 +766,9 @@ fn password_secret(
     password: bool,
     password_file: Option<&Path>,
     confirm: bool,
-) -> Result<Option<Secret<String>>, CliError> {
+) -> Result<Option<SecretString>, CliError> {
     if let Some(path) = password_file {
-        return Ok(Some(Secret::new(read_secret_file(path)?)));
+        return Ok(Some(SecretString::from(read_secret_file(path)?)));
     }
 
     if !password {
@@ -774,16 +782,18 @@ fn password_secret(
             return Err(CliError::Message("Passwords do not match".to_string()));
         }
     }
-    Ok(Some(Secret::new(first)))
+    Ok(Some(SecretString::from(first)))
 }
 
-fn seed_secret(seed: bool, seed_file: Option<&Path>) -> Result<Option<Secret<String>>, CliError> {
+fn seed_secret(seed: bool, seed_file: Option<&Path>) -> Result<Option<SecretString>, CliError> {
     if let Some(path) = seed_file {
-        return Ok(Some(Secret::new(read_secret_file(path)?)));
+        return Ok(Some(SecretString::from(read_secret_file(path)?)));
     }
 
     if seed {
-        return Ok(Some(Secret::new(prompt_password("Enter seed (pepper): ")?)));
+        return Ok(Some(SecretString::from(prompt_password(
+            "Enter seed (pepper): ",
+        )?)));
     }
 
     Ok(None)
@@ -1158,10 +1168,7 @@ fn run() -> Result<(), CliError> {
                     release_metadata: envelope.release_metadata.clone(),
                     has_recovery_metadata: envelope.recovery_metadata.is_some(),
                 };
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
-                );
+                output::print_success("inspect", &result)?;
             } else {
                 println!("Lvau envelope metadata");
                 println!(
@@ -1265,13 +1272,7 @@ fn run() -> Result<(), CliError> {
             pb.finish_and_clear();
 
             if json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "status": "ok",
-                        "file": in_file,
-                    })
-                );
+                output::print_success("verify", &serde_json::json!({ "file": in_file }))?;
             } else {
                 println!("Verification successful: {}", in_file.display());
             }
@@ -1302,7 +1303,7 @@ fn run() -> Result<(), CliError> {
             let failed = matches!(res.status, lvau_core::preflight::PreflightStatus::Fail);
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&res).unwrap());
+                output::print_success("preflight", &res)?;
             } else {
                 println!("Preflight Report for: {}", in_file.display());
                 println!("===========================================");
@@ -1412,7 +1413,7 @@ fn run() -> Result<(), CliError> {
             );
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                output::print_success("report", &report)?;
             } else {
                 println!("==================================================");
                 println!("             Lvau Verification Report             ");
@@ -1480,7 +1481,7 @@ fn run() -> Result<(), CliError> {
                         "violations": result.violations.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>(),
                         "warnings": result.warnings.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>()
                     });
-                    println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+                    output::print_success("policy.lint", &json_val)?;
                 } else {
                     println!(
                         "Linting artifact {} against {}",
@@ -1681,7 +1682,7 @@ fn run() -> Result<(), CliError> {
                 let report = lvau_core::diff::diff_bundles(&old_file, old_pwd, &new_file, new_pwd)?;
 
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                    output::print_success("report", &report)?;
                 } else {
                     println!("Diff Report:");
                     println!("Old: {}", old_file.display());
@@ -1968,11 +1969,11 @@ fn run() -> Result<(), CliError> {
                     in_file.extension().and_then(|e| e.to_str()).unwrap_or("")
                 ));
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password for secret: ")
                         .map_err(CliError::Io)?,
                 );
-                let confirm = Secret::new(
+                let confirm = SecretString::from(
                     rpassword::prompt_password("Confirm password: ").map_err(CliError::Io)?,
                 );
                 if pwd.expose_secret() != confirm.expose_secret() {
@@ -2009,7 +2010,7 @@ fn run() -> Result<(), CliError> {
                 let out_file = in_file.with_extension("");
                 ensure_output_available(&out_file, false)?;
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to decrypt: ")
                         .map_err(CliError::Io)?,
                 );
@@ -2021,7 +2022,7 @@ fn run() -> Result<(), CliError> {
             SecretAction::Edit { in_file } => {
                 ensure_input_file(&in_file)?;
 
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to edit: ").map_err(CliError::Io)?,
                 );
 
@@ -2073,7 +2074,7 @@ fn run() -> Result<(), CliError> {
             }
             SecretAction::Print { in_file } => {
                 ensure_input_file(&in_file)?;
-                let pwd = Secret::new(
+                let pwd = SecretString::from(
                     rpassword::prompt_password("Enter password to print: ")
                         .map_err(CliError::Io)?,
                 );
@@ -2249,7 +2250,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2259,7 +2260,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             )?;
@@ -2289,7 +2290,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2299,7 +2300,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("wrongpass".into()),
+                SecretString::from("wrongpass".to_string()),
                 None,
                 None,
             );
@@ -2328,7 +2329,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2346,7 +2347,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             );
@@ -2377,7 +2378,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2387,7 +2388,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                Secret::new("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             )?;

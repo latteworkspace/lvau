@@ -1,7 +1,10 @@
+pub mod framing;
+pub mod key_schedule;
 pub mod keys;
 pub mod lco;
 pub mod parallel;
 pub mod password;
+pub mod suite;
 
 use parallel::{stream_decrypt_payload, stream_encrypt_payload};
 
@@ -21,7 +24,7 @@ use lvau_protocol::envelope::{
     CURRENT_VERSION, LEGACY_VERSION, MAGIC_REAL,
 };
 use rand_core::{OsRng, RngCore};
-use secrecy::{ExposeSecret, Secret};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -56,13 +59,13 @@ pub enum CryptoError {
 }
 
 pub enum EncryptCredential {
-    Password(Secret<String>, Option<Secret<String>>),
+    Password(SecretString, Option<SecretString>),
     Keypairs(Vec<crate::crypto::keys::HybridPublicKey>),
 }
 
 fn derive_master_key(
-    password: &Secret<String>,
-    seed: Option<&Secret<String>>,
+    password: &SecretString,
+    seed: Option<&SecretString>,
     kdf: &KdfParams,
 ) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
     match kdf {
@@ -414,8 +417,8 @@ pub fn read_envelope_from_path(input_path: &Path) -> Result<Envelope, CryptoErro
 pub fn encrypt_file_password(
     input_path: &Path,
     output_path: &Path,
-    password: Secret<String>,
-    seed: Option<Secret<String>>,
+    password: SecretString,
+    seed: Option<SecretString>,
     profile: SecurityProfile,
     progress_callback: Option<&mut dyn FnMut(u64)>,
     policy: Option<&crate::policy::CapsulePolicy>,
@@ -438,8 +441,8 @@ pub fn encrypt_file_password(
 pub(crate) fn encrypt_file_password_with_content_type(
     input_path: &Path,
     output_path: &Path,
-    password: Secret<String>,
-    seed: Option<Secret<String>>,
+    password: SecretString,
+    seed: Option<SecretString>,
     profile: SecurityProfile,
     progress_callback: Option<&mut dyn FnMut(u64)>,
     policy: Option<&crate::policy::CapsulePolicy>,
@@ -491,9 +494,7 @@ pub(crate) fn encrypt_file_password_with_content_type(
     // Derive Key Wrapping Key
     let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    kw_hk
-        .expand(b"Lvau-Key-Wrap", &mut *kwk)
-        .map_err(|_| CryptoError::EncryptionFailed)?;
+    key_schedule::derive_subkey(&kw_hk, key_schedule::KeyPurpose::KeyWrap, &mut kwk)?;
 
     // Generate FEK (File Encryption Key)
     let mut fek = Zeroizing::new([0u8; 32]);
@@ -641,7 +642,7 @@ pub(crate) fn encrypt_file_keypairs_with_content_type(
     let mut envelope_recipients = Vec::new();
 
     for pubkey in recipient_pubs {
-        let ephem_x25519_priv = StaticSecret::random_from_rng(rng);
+        let ephem_x25519_priv = StaticSecret::random();
         let ephem_x25519_pub = X25519PublicKey::from(&ephem_x25519_priv);
         let x25519_ss = ephem_x25519_priv.diffie_hellman(&pubkey.x25519);
 
@@ -812,8 +813,8 @@ pub fn decrypt_file_keypair(
 pub fn decrypt_file_password(
     input_path: &Path,
     output_path: &Path,
-    password: Secret<String>,
-    seed: Option<Secret<String>>,
+    password: SecretString,
+    seed: Option<SecretString>,
     progress_callback: Option<&mut dyn FnMut(u64)>,
 ) -> Result<(), CryptoError> {
     info!("Starting decryption of {}", input_path.display());
@@ -898,8 +899,8 @@ pub fn verify_file_keypair(
 
 pub fn verify_file_password(
     input_path: &Path,
-    password: Secret<String>,
-    seed: Option<Secret<String>>,
+    password: SecretString,
+    seed: Option<SecretString>,
     progress_callback: Option<&mut dyn FnMut(u64)>,
 ) -> Result<(), CryptoError> {
     info!("Starting verification of {}", input_path.display());
@@ -966,8 +967,8 @@ pub fn inspect_envelope(input_path: &Path) -> Result<EnvelopeHeader, CryptoError
 // Stubs for backward compatibility used by stub crate
 pub fn decrypt_memory_password(
     encoded_envelope: &[u8],
-    password: Secret<String>,
-    seed: Option<Secret<String>>,
+    password: SecretString,
+    seed: Option<SecretString>,
 ) -> Result<Vec<u8>, CryptoError> {
     let mut cursor = std::io::Cursor::new(encoded_envelope);
     let envelope = read_envelope(&mut cursor)?;

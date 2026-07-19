@@ -9,7 +9,11 @@ use sha2::Sha256;
 use std::io::{Read, Write};
 use zeroize::Zeroizing;
 
-use super::{lco, AlgorithmId, CryptoError};
+use super::{
+    framing,
+    key_schedule::{derive_subkey, KeyPurpose},
+    lco, AlgorithmId, CryptoError,
+};
 
 /// Each chunk is 1 MiB. This size balances parallelism and memory usage.
 pub const CHUNK_SIZE: usize = 1024 * 1024;
@@ -23,15 +27,6 @@ pub fn get_encrypted_chunk_size(algorithm: &AlgorithmId) -> usize {
         AlgorithmId::TripleCascadeAesXChaChaLco => CHUNK_SIZE + 32,
         _ => CHUNK_SIZE,
     }
-}
-
-fn expand_key(
-    hk: &Hkdf<Sha256>,
-    info: &'static [u8],
-    out: &mut [u8; 32],
-) -> Result<(), CryptoError> {
-    hk.expand(info, out)
-        .map_err(|_| CryptoError::EncryptionFailed)
 }
 
 /// Encrypt plaintext in batches of 1 MiB chunks from a reader to a writer.
@@ -61,16 +56,16 @@ pub fn stream_encrypt_payload(
 
     match algorithm {
         AlgorithmId::XChaCha20Poly1305 => {
-            expand_key(hk, b"Lvau-file-encryption", &mut file_key)?;
+            derive_subkey(hk, KeyPurpose::Payload, &mut file_key)?;
         }
         AlgorithmId::CascadeAesGcmXChaCha => {
-            expand_key(hk, b"Lvau-Cascade-AES", &mut key_aes)?;
-            expand_key(hk, b"Lvau-Cascade-XChaCha", &mut key_xchacha)?;
+            derive_subkey(hk, KeyPurpose::CascadeAes, &mut key_aes)?;
+            derive_subkey(hk, KeyPurpose::CascadeXChaCha, &mut key_xchacha)?;
         }
         AlgorithmId::TripleCascadeAesXChaChaLco => {
-            expand_key(hk, b"Lvau-Cascade-AES", &mut key_aes)?;
-            expand_key(hk, b"Lvau-Cascade-XChaCha", &mut key_xchacha)?;
-            expand_key(hk, b"Lvau-Cascade-LCO", &mut key_lco)?;
+            derive_subkey(hk, KeyPurpose::CascadeAes, &mut key_aes)?;
+            derive_subkey(hk, KeyPurpose::CascadeXChaCha, &mut key_xchacha)?;
+            derive_subkey(hk, KeyPurpose::LegacyLco, &mut key_lco)?;
         }
         _ => return Err(CryptoError::UnsupportedProfile),
     }
@@ -125,16 +120,12 @@ pub fn stream_encrypt_payload(
             .enumerate()
             .try_for_each(
                 |(local_idx, (chunk, out_chunk))| -> Result<(), CryptoError> {
-                    let chunk_idx = start_idx + local_idx as u64;
+                    let chunk_idx = start_idx
+                        .checked_add(local_idx as u64)
+                        .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
-                    let mut chunk_nonce = *nonce_bytes;
-                    let idx_bytes = chunk_idx.to_le_bytes();
-                    for i in 0..8 {
-                        chunk_nonce[i] ^= idx_bytes[i];
-                    }
-
-                    let mut chunk_aad = aad_hash.to_vec();
-                    chunk_aad.extend_from_slice(&idx_bytes);
+                    let chunk_nonce = framing::xchacha_nonce(nonce_bytes, chunk_idx);
+                    let chunk_aad = framing::chunk_aad(aad_hash, chunk_idx);
 
                     let encrypted = match algorithm {
                         AlgorithmId::XChaCha20Poly1305 => {
@@ -153,10 +144,7 @@ pub fn stream_encrypt_payload(
                         AlgorithmId::CascadeAesGcmXChaCha => {
                             let sn_bytes =
                                 secondary_nonce_bytes.ok_or(CryptoError::MissingSecondaryNonce)?;
-                            let mut chunk_sn = sn_bytes;
-                            for i in 0..8 {
-                                chunk_sn[i] ^= idx_bytes[i];
-                            }
+                            let chunk_sn = framing::aes_nonce(&sn_bytes, chunk_idx);
 
                             let aes_nonce = AesNonce::from(chunk_sn);
                             let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
@@ -186,10 +174,7 @@ pub fn stream_encrypt_payload(
                         AlgorithmId::TripleCascadeAesXChaChaLco => {
                             let sn_bytes =
                                 secondary_nonce_bytes.ok_or(CryptoError::MissingSecondaryNonce)?;
-                            let mut chunk_sn = sn_bytes;
-                            for i in 0..8 {
-                                chunk_sn[i] ^= idx_bytes[i];
-                            }
+                            let chunk_sn = framing::aes_nonce(&sn_bytes, chunk_idx);
 
                             let aes_nonce = AesNonce::from(chunk_sn);
                             let aes_cipher = Aes256Gcm::new(key_aes.as_ref().into());
@@ -232,7 +217,9 @@ pub fn stream_encrypt_payload(
         }
 
         total_bytes_read += batch_bytes_read as u64;
-        global_chunk_idx += num_chunks_in_batch as u64;
+        global_chunk_idx = global_chunk_idx
+            .checked_add(num_chunks_in_batch as u64)
+            .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
         if let Some(ref mut cb) = progress_callback {
             cb(total_bytes_read);
@@ -266,16 +253,16 @@ pub fn stream_decrypt_payload(
 
     match algorithm {
         AlgorithmId::XChaCha20Poly1305 => {
-            expand_key(hk, b"Lvau-file-encryption", &mut file_key)?;
+            derive_subkey(hk, KeyPurpose::Payload, &mut file_key)?;
         }
         AlgorithmId::CascadeAesGcmXChaCha => {
-            expand_key(hk, b"Lvau-Cascade-AES", &mut key_aes)?;
-            expand_key(hk, b"Lvau-Cascade-XChaCha", &mut key_xchacha)?;
+            derive_subkey(hk, KeyPurpose::CascadeAes, &mut key_aes)?;
+            derive_subkey(hk, KeyPurpose::CascadeXChaCha, &mut key_xchacha)?;
         }
         AlgorithmId::TripleCascadeAesXChaChaLco => {
-            expand_key(hk, b"Lvau-Cascade-AES", &mut key_aes)?;
-            expand_key(hk, b"Lvau-Cascade-XChaCha", &mut key_xchacha)?;
-            expand_key(hk, b"Lvau-Cascade-LCO", &mut key_lco)?;
+            derive_subkey(hk, KeyPurpose::CascadeAes, &mut key_aes)?;
+            derive_subkey(hk, KeyPurpose::CascadeXChaCha, &mut key_xchacha)?;
+            derive_subkey(hk, KeyPurpose::LegacyLco, &mut key_lco)?;
         }
         _ => return Err(CryptoError::UnsupportedProfile),
     }
@@ -355,16 +342,12 @@ pub fn stream_decrypt_payload(
             .enumerate()
             .try_for_each(
                 |(local_idx, (chunk, out_chunk))| -> Result<(), CryptoError> {
-                    let chunk_idx = start_idx + local_idx as u64;
+                    let chunk_idx = start_idx
+                        .checked_add(local_idx as u64)
+                        .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
-                    let mut chunk_nonce = *nonce_bytes;
-                    let idx_bytes = chunk_idx.to_le_bytes();
-                    for i in 0..8 {
-                        chunk_nonce[i] ^= idx_bytes[i];
-                    }
-
-                    let mut chunk_aad = aad_hash.to_vec();
-                    chunk_aad.extend_from_slice(&idx_bytes);
+                    let chunk_nonce = framing::xchacha_nonce(nonce_bytes, chunk_idx);
+                    let chunk_aad = framing::chunk_aad(aad_hash, chunk_idx);
 
                     let decrypted = match algorithm {
                         AlgorithmId::XChaCha20Poly1305 => {
@@ -383,10 +366,7 @@ pub fn stream_decrypt_payload(
                         AlgorithmId::CascadeAesGcmXChaCha => {
                             let sn_bytes =
                                 secondary_nonce_bytes.ok_or(CryptoError::MissingSecondaryNonce)?;
-                            let mut chunk_sn = sn_bytes;
-                            for i in 0..8 {
-                                chunk_sn[i] ^= idx_bytes[i];
-                            }
+                            let chunk_sn = framing::aes_nonce(&sn_bytes, chunk_idx);
 
                             let xchacha_nonce = XNonce::from(chunk_nonce);
                             let xchacha_cipher =
@@ -416,10 +396,7 @@ pub fn stream_decrypt_payload(
                         AlgorithmId::TripleCascadeAesXChaChaLco => {
                             let sn_bytes =
                                 secondary_nonce_bytes.ok_or(CryptoError::MissingSecondaryNonce)?;
-                            let mut chunk_sn = sn_bytes;
-                            for i in 0..8 {
-                                chunk_sn[i] ^= idx_bytes[i];
-                            }
+                            let chunk_sn = framing::aes_nonce(&sn_bytes, chunk_idx);
 
                             let mut c2 = chunk.clone();
                             lco::apply_lco(&mut c2, &key_lco, &chunk_nonce);
@@ -464,7 +441,9 @@ pub fn stream_decrypt_payload(
         }
 
         total_bytes_written += batch_bytes_written;
-        global_chunk_idx += num_chunks_in_batch as u64;
+        global_chunk_idx = global_chunk_idx
+            .checked_add(num_chunks_in_batch as u64)
+            .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
         if let Some(ref mut cb) = progress_callback {
             cb(total_bytes_written);
