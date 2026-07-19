@@ -125,7 +125,6 @@ pub fn stream_encrypt_payload(
                         .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
                     let chunk_nonce = framing::xchacha_nonce(nonce_bytes, chunk_idx);
-                    let idx_bytes = chunk_idx.to_le_bytes();
                     let chunk_aad = framing::chunk_aad(aad_hash, chunk_idx);
 
                     let encrypted = match algorithm {
@@ -348,7 +347,6 @@ pub fn stream_decrypt_payload(
                         .ok_or(CryptoError::Validation("Chunk index overflow"))?;
 
                     let chunk_nonce = framing::xchacha_nonce(nonce_bytes, chunk_idx);
-                    let idx_bytes = chunk_idx.to_le_bytes();
                     let chunk_aad = framing::chunk_aad(aad_hash, chunk_idx);
 
                     let decrypted = match algorithm {
