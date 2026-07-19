@@ -2547,7 +2547,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "walkdir",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "x25519-dalek",
  "zeroize",
 ]
