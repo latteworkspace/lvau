@@ -494,7 +494,7 @@ pub(crate) fn encrypt_file_password_with_content_type(
     // Derive Key Wrapping Key
     let kw_hk = Hkdf::<Sha256>::new(None, &*master_key);
     let mut kwk = Zeroizing::new([0u8; 32]);
-    key_schedule::derive_subkey(&kw_hk, key_schedule::KeyPurpose::KeyWrap, &mut *kwk)?;
+    key_schedule::derive_subkey(&kw_hk, key_schedule::KeyPurpose::KeyWrap, &mut kwk)?;
 
     // Generate FEK (File Encryption Key)
     let mut fek = Zeroizing::new([0u8; 32]);
