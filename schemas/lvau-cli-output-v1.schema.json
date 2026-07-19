@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/latteworkspace/lvau/schemas/lvau-cli-output-v1.schema.json",
+  "title": "Lvau CLI JSON output v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "status", "data"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "status": { "const": "ok" },
+        "data": {}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "status", "error"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "status": { "const": "error" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  ]
+}
