@@ -46,10 +46,15 @@ nonce_block = """                    let mut chunk_nonce = *nonce_bytes;
                     chunk_aad.extend_from_slice(&idx_bytes);
 """
 nonce_replacement = """                    let chunk_nonce = framing::xchacha_nonce(nonce_bytes, chunk_idx);
-                    let idx_bytes = chunk_idx.to_le_bytes();
                     let chunk_aad = framing::chunk_aad(aad_hash, chunk_idx);
 """
 parallel = parallel.replace(nonce_block, nonce_replacement)
+# Remove the now-obsolete binding from branches already transformed by an
+# earlier bootstrap run.
+parallel = parallel.replace(
+    "                    let idx_bytes = chunk_idx.to_le_bytes();\n",
+    "",
+)
 
 aes_block = """                            let sn_bytes =
                                 secondary_nonce_bytes.ok_or(CryptoError::MissingSecondaryNonce)?;
