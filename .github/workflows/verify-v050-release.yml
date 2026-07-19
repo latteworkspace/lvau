@@ -1,0 +1,169 @@
+name: Verify v0.5.0 Release
+
+on:
+  push:
+    branches:
+      - verify/v0.5.0-release
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: v0.5.0
+          persist-credentials: false
+      - name: Verify release assets, checksums, SBOMs, and attestations
+        id: verify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: 60927483148f7a96e396015f6c7b89dd0391a0ee
+        shell: bash
+        run: |
+          set +e
+          rm -rf release-assets
+          mkdir release-assets
+          failure=0
+
+          if [[ "$(git rev-parse HEAD)" != "$RELEASE_COMMIT" ]]; then
+            echo "tag target mismatch" | tee verification.txt
+            failure=1
+          fi
+
+          ready=0
+          for attempt in $(seq 1 20); do
+            gh release view v0.5.0 --repo "$GITHUB_REPOSITORY" \
+              --json tagName,name,isDraft,isPrerelease,targetCommitish,url,assets > release.json 2>/dev/null
+            if python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path("release.json")
+          if not path.exists() or not path.stat().st_size:
+              sys.exit(1)
+          release = json.loads(path.read_text(encoding="utf-8"))
+          names = {asset["name"] for asset in release.get("assets", [])}
+          required = {
+              "lvau-x86_64-unknown-linux-gnu.tar.gz",
+              "lvau-x86_64-pc-windows-msvc.zip",
+              "lvau-x86_64-apple-darwin.tar.gz",
+              "lvau-aarch64-apple-darwin.tar.gz",
+              "checksums.txt",
+          }
+          sboms = {name for name in names if name.endswith(".cdx.json")}
+          ok = (
+              release.get("tagName") == "v0.5.0"
+              and release.get("isDraft") is False
+              and release.get("isPrerelease") is False
+              and required <= names
+              and len(sboms) >= 5
+          )
+          sys.exit(0 if ok else 1)
+          PY
+            then
+              ready=1
+              break
+            fi
+            sleep 15
+          done
+
+          if [[ "$ready" != 1 ]]; then
+            echo "release assets did not become complete" | tee -a verification.txt
+            failure=1
+          else
+            gh release download v0.5.0 --repo "$GITHUB_REPOSITORY" --dir release-assets --clobber
+            download_status=$?
+            if [[ "$download_status" != 0 ]]; then
+              echo "release download failed" | tee -a verification.txt
+              failure=1
+            fi
+          fi
+
+          if [[ "$failure" == 0 ]]; then
+            (
+              cd release-assets
+              sha256sum -c checksums.txt
+            ) | tee -a verification.txt
+            if [[ "${PIPESTATUS[0]}" != 0 ]]; then
+              failure=1
+            fi
+
+            python3 - <<'PY' | tee -a verification.txt
+          import json
+          import pathlib
+
+          files = sorted(pathlib.Path("release-assets").glob("*.cdx.json"))
+          if len(files) < 5:
+              raise SystemExit(f"expected at least 5 SBOMs, found {len(files)}")
+          for path in files:
+              document = json.loads(path.read_text(encoding="utf-8"))
+              if document.get("bomFormat") != "CycloneDX":
+                  raise SystemExit(f"invalid CycloneDX SBOM: {path.name}")
+          print(f"validated {len(files)} CycloneDX SBOMs")
+          PY
+            if [[ "${PIPESTATUS[0]}" != 0 ]]; then
+              failure=1
+            fi
+
+            for artifact in \
+              release-assets/*.tar.gz \
+              release-assets/*.zip \
+              release-assets/checksums.txt \
+              release-assets/*.cdx.json
+            do
+              verified=0
+              for attempt in $(seq 1 8); do
+                if gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY" >> verification.txt 2>&1; then
+                  verified=1
+                  break
+                fi
+                sleep 10
+              done
+              if [[ "$verified" != 1 ]]; then
+                echo "attestation verification failed: $artifact" | tee -a verification.txt
+                failure=1
+              fi
+            done
+          fi
+
+          if [[ "$failure" == 0 ]]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "v0.5.0 release verification succeeded" | tee -a verification.txt
+            exit 0
+          fi
+
+          echo "status=failure" >> "$GITHUB_OUTPUT"
+          echo "v0.5.0 release verification failed" | tee -a verification.txt
+          exit 1
+      - name: Upload verification record
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: v050-release-verification-${{ github.run_id }}
+          path: |
+            release.json
+            verification.txt
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Report verification on issue #10
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ steps.verify.outputs.status }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          result="${RESULT:-failure}"
+          gh issue comment 10 --repo "$GITHUB_REPOSITORY" --body "<!-- lvau-v050-verification:${GITHUB_RUN_ID} -->
+          v0.5.0 independent release verification: **${result}**
+
+          Checked the tag target, four platform archives, SHA-256 checksums, CycloneDX SBOMs, and GitHub artifact attestations.
+
+          - source commit: \`60927483148f7a96e396015f6c7b89dd0391a0ee\`
+          - workflow: ${RUN_URL}"
