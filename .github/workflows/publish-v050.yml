@@ -213,3 +213,34 @@ jobs:
             artifacts/*.zip
             artifacts/checksums.txt
             artifacts/sbom/*.cdx.json
+
+  report:
+    name: Report publish result
+    if: always()
+    needs: [validate, build, release]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Comment final result on issue #10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          overall=failure
+          if [[ "$VALIDATE_RESULT" == success && "$BUILD_RESULT" == success && "$RELEASE_RESULT" == success ]]; then
+            overall=success
+          fi
+          gh issue comment 10 --repo "$GITHUB_REPOSITORY" --body "<!-- lvau-v050-publish:${GITHUB_RUN_ID} -->
+          v0.5.0 publish result: **${overall}**
+
+          - validate: ${VALIDATE_RESULT}
+          - four-platform build: ${BUILD_RESULT}
+          - release / checksums / SBOM / attestations: ${RELEASE_RESULT}
+          - source commit: \`${RELEASE_COMMIT}\`
+          - workflow: ${RUN_URL}"
