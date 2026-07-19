@@ -27,8 +27,8 @@ jobs:
         run: python3 scripts/v050_migrate.py
       - name: Format
         run: cargo fmt --all
-      - name: Refresh lockfile and check workspace
-        run: cargo check --workspace --all-targets --all-features
+      - name: Refresh lockfile
+        run: cargo update -w
       - name: Commit generated migration
         run: |
           if git diff --quiet; then
@@ -40,3 +40,5 @@ jobs:
           git add Cargo.lock crates
           git commit -m "refactor(v0.5.0): migrate dependency APIs and versions"
           git push origin HEAD:feat/v0.5.0
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --all-features
