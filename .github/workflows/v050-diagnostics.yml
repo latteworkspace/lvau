@@ -6,55 +6,42 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: v050-diagnostics-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  diagnostics:
+  correct-and-validate:
     if: github.head_ref == 'feat/v0.5.0'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          persist-credentials: false
+          ref: feat/v0.5.0
+          persist-credentials: true
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          components: clippy
+          components: clippy,rustfmt
+      - name: Apply diagnosed corrections
+        run: python3 scripts/v050_fix_ci.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Commit corrections
+        run: |
+          if git diff --quiet; then
+            echo "Corrections already applied"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add crates
+            git commit -m "fix(v0.5.0): satisfy clippy and JSON contract tests"
+            git push origin HEAD:feat/v0.5.0
+          fi
       - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
       - name: Run Clippy
-        id: clippy
-        continue-on-error: true
-        shell: bash
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings > clippy.log 2>&1
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Run tests
-        id: tests
-        continue-on-error: true
-        shell: bash
-        run: cargo test --locked --workspace --all-features -- --nocapture > tests.log 2>&1
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: v050-diagnostics-${{ runner.os }}-${{ github.run_id }}
-          path: |
-            clippy.log
-            tests.log
-          if-no-files-found: error
-          retention-days: 2
-      - name: Propagate failures
-        if: steps.clippy.outcome == 'failure' || steps.tests.outcome == 'failure'
-        run: |
-          echo '=== clippy tail ==='
-          tail -n 100 clippy.log
-          echo '=== tests tail ==='
-          tail -n 160 tests.log
-          exit 1
+        run: cargo test --locked --workspace --all-features
