@@ -568,7 +568,6 @@ mod tests {
     #[test]
     fn copy_buffer_is_bounded() {
         assert_eq!(BUNDLE_COPY_BUFFER_SIZE, 64 * 1024);
-        assert!(BUNDLE_COPY_BUFFER_SIZE < 1024 * 1024);
     }
 
     #[test]
