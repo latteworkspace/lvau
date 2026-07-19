@@ -1,0 +1,60 @@
+name: v0.5.0 Diagnostics
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v050-windows-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  windows-fix:
+    if: github.head_ref == 'feat/v0.5.0'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: feat/v0.5.0
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: rustfmt
+      - name: Apply Windows correction
+        shell: pwsh
+        run: python scripts/v050_fix_windows.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Commit correction
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Windows correction already applied"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add crates/lvau-core/src/bundle_stream.rs
+            git commit -m "fix(bundle): validate Windows targets by handle"
+            git push origin HEAD:feat/v0.5.0
+          fi
+      - name: Run Windows workspace tests
+        id: tests
+        continue-on-error: true
+        shell: pwsh
+        run: cargo test --locked --workspace --all-features 2>&1 | Tee-Object -FilePath windows-tests.log
+      - name: Upload Windows diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: v050-windows-${{ github.run_id }}
+          path: windows-tests.log
+          if-no-files-found: error
+          retention-days: 2
+      - name: Propagate test failure
+        if: steps.tests.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
