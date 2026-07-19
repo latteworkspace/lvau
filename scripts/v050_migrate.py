@@ -94,6 +94,58 @@ def wire_streaming_bundle() -> None:
     bundle.write_text(text, encoding="utf-8")
 
 
+def wire_json_output() -> None:
+    main = ROOT / "crates/lvau-cli/src/main.rs"
+    text = main.read_text(encoding="utf-8")
+    if not text.startswith("mod output;\n"):
+        text = "mod output;\n\n" + text
+
+    serde_impl = """impl From<serde_json::Error> for CliError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Message(format!(\"JSON serialization failed: {error}\"))
+    }
+}
+
+"""
+    marker = "impl From<lvau_core::crypto::CryptoError> for CliError {"
+    if serde_impl not in text:
+        text = text.replace(marker, serde_impl + marker, 1)
+
+    text = text.replace(
+        '''                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+                );''',
+        '''                output::print_success("inspect", &result)?;''',
+    )
+    text = text.replace(
+        '''                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "ok",
+                        "file": in_file,
+                    })
+                );''',
+        '''                output::print_success(
+                    "verify",
+                    &serde_json::json!({ "file": in_file }),
+                )?;''',
+    )
+    text = text.replace(
+        '                println!("{}", serde_json::to_string_pretty(&res).unwrap());',
+        '                output::print_success("preflight", &res)?;',
+    )
+    text = text.replace(
+        '                println!("{}", serde_json::to_string_pretty(&report).unwrap());',
+        '                output::print_success("report", &report)?;',
+    )
+    text = text.replace(
+        '                    println!("{}", serde_json::to_string_pretty(&json_val).unwrap());',
+        '                    output::print_success("policy.lint", &json_val)?;',
+    )
+    main.write_text(text, encoding="utf-8")
+
+
 def update_manifests() -> None:
     for path in ROOT.joinpath("crates").glob("*/Cargo.toml"):
         text = path.read_text(encoding="utf-8")
@@ -111,4 +163,5 @@ if __name__ == "__main__":
     migrate_rust_sources()
     wire_crypto_modules()
     wire_streaming_bundle()
+    wire_json_output()
     update_manifests()
