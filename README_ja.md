@@ -2,7 +2,7 @@
 
 > ローカルファイルと開発者ワークフロー向けの、検査可能な暗号化カプセル。
 
-Lvau は CLI、ネイティブ GUI、暗号ライブラリ、バージョン付き `.lvau` プロトコル、実験的な自己展開 stub からなる Rust workspace です。現在のリリースは **0.4.0** です。
+Lvau は CLI、ネイティブ GUI、暗号ライブラリ、バージョン付き `.lvau` プロトコル、実験的な自己展開 stub からなる Rust workspace です。現在のリリースは **0.5.0** です。
 
 [English](README.md) | 日本語
 
@@ -30,6 +30,17 @@ lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file
 ```
 
 Windows では、Lvau を実行するアカウントだけが読める ACL を設定してください。Windows のパスワードファイル ACL は自動検証しません。パスワードや seed ファイルを commit しないでください。
+
+## 0.5.0 の変更
+
+- directory bundle は、平文 payload 全体を memory に保持せず、固定 64 KiB buffer で file content を streaming 処理します。暗号化 payload layout は format v2 と互換です。
+- pack は size/BLAKE3 を2回検証し、extract はすべての entry を認証してから named output を atomic に作成します。
+- 既存 v2 の HKDF label、nonce derivation、chunk AAD を versioned suite registry に集約し、互換性 vector を固定しました。
+- `secrecy` 0.10 と `x25519-dalek` 3 への移行を完了しました。
+- inspect、verify、preflight、report、policy lint の machine-readable output は JSON schema version 1 を使用します。
+- この release も envelope v2 を書き込みます。実験的 format v3 は 0.6.0 で別途導入します。
+
+詳細は [CHANGELOG.md](CHANGELOG.md)、[JSON contract](docs/JSON_OUTPUT.md)、[roadmap](docs/ROADMAP.md) を参照してください。
 
 ## 0.4.0 の変更
 

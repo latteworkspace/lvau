@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-19
+
+### Security
+
+- Bundle pack, list, verify, and extract now process file contents with a fixed 64 KiB buffer instead of allocating the complete plaintext payload. The serialized manifest is independently capped at 16 MiB.
+- Bundle extraction authenticates every manifest entry before creating any named output and writes each file through a same-directory temporary file before atomic persistence.
+- Bundle packing hashes every source in a first pass and verifies size and BLAKE3 again while streaming the second pass, rejecting files that change during packing.
+- Existing format-v2 cipher suites now share explicit, fixed HKDF labels, nonce derivation, and chunk-AAD helpers with known-answer tests. This refactor preserves the v2 byte construction and does not introduce format v3.
+
+### Added
+
+- Added an internal versioned cryptographic-suite registry that distinguishes payload encryption layers from recipient algorithms, signatures, padding, and legacy LCO obfuscation.
+- Added fixed key-schedule and nonce/AAD vectors as foundations for the separately reviewed experimental format-v3 work planned for 0.6.0.
+- Added JSON output schema version 1. Machine-readable commands return a top-level `schema_version`, `command`, `status`, and `data` envelope.
+
+### Changed
+
+- Updated all workspace crates to version 0.5.0.
+- Migrated secret-string handling to `secrecy` 0.10 and X25519 handling to `x25519-dalek` 3 with the operating-system random generator feature.
+- Bundle payload layout and envelope format remain compatible with existing v2 readers; v1 and v2 reads are retained.
+- CLI JSON output for inspect, verify, preflight, report, and policy lint now uses the versioned envelope contract.
+
+### Migration
+
+- No re-encryption is required for existing v2 files. Format v1 and v2 remain readable.
+- Automation consuming JSON must read command-specific fields from `data` and may use `schema_version == 1` to select the contract.
+- LCO remains legacy experimental obfuscation and is not counted or described as an encryption layer.
+
 ## [0.4.0] - 2026-07-17
 
 ### Security
