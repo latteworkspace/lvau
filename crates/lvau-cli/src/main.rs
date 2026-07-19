@@ -2251,7 +2251,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2261,7 +2261,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             )?;
@@ -2291,7 +2291,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2301,7 +2301,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                SecretString::from("wrongpass".into()),
+                SecretString::from("wrongpass".to_string()),
                 None,
                 None,
             );
@@ -2330,7 +2330,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2348,7 +2348,7 @@ fn run_self_test() -> Result<(), CliError> {
             let res = decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             );
@@ -2379,7 +2379,7 @@ fn run_self_test() -> Result<(), CliError> {
             encrypt_file_password(
                 &in_path,
                 &enc_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 SecurityProfile::Fast,
                 None,
@@ -2389,7 +2389,7 @@ fn run_self_test() -> Result<(), CliError> {
             decrypt_file_password(
                 &enc_path,
                 &dec_path,
-                SecretString::from("testpass".into()),
+                SecretString::from("testpass".to_string()),
                 None,
                 None,
             )?;
