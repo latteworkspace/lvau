@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the two compiler/test corrections identified by final CI."""
+"""Apply compiler and test corrections identified by final CI."""
 
 from pathlib import Path
 
@@ -25,3 +25,12 @@ text = text.replace(
     assert_eq!(parsed["data"]["signed"], false);''',
 )
 cli_test.write_text(text, encoding="utf-8")
+
+bundle_stream = root / "crates/lvau-core/src/bundle_stream.rs"
+text = bundle_stream.read_text(encoding="utf-8")
+text = text.replace(
+    '''        assert_eq!(BUNDLE_COPY_BUFFER_SIZE, 64 * 1024);
+        assert!(BUNDLE_COPY_BUFFER_SIZE < 1024 * 1024);''',
+    '''        assert_eq!(BUNDLE_COPY_BUFFER_SIZE, 64 * 1024);''',
+)
+bundle_stream.write_text(text, encoding="utf-8")
