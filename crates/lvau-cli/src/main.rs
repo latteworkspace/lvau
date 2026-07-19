@@ -1,3 +1,5 @@
+mod output;
+
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use lvau_core::bundle::{
@@ -705,6 +707,12 @@ impl From<std::io::Error> for CliError {
     }
 }
 
+impl From<serde_json::Error> for CliError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Message(format!("JSON serialization failed: {error}"))
+    }
+}
+
 impl From<lvau_core::crypto::CryptoError> for CliError {
     fn from(error: lvau_core::crypto::CryptoError) -> Self {
         Self::Crypto(error)
@@ -1160,10 +1168,7 @@ fn run() -> Result<(), CliError> {
                     release_metadata: envelope.release_metadata.clone(),
                     has_recovery_metadata: envelope.recovery_metadata.is_some(),
                 };
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
-                );
+                output::print_success("inspect", &result)?;
             } else {
                 println!("Lvau envelope metadata");
                 println!(
@@ -1267,13 +1272,7 @@ fn run() -> Result<(), CliError> {
             pb.finish_and_clear();
 
             if json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "status": "ok",
-                        "file": in_file,
-                    })
-                );
+                output::print_success("verify", &serde_json::json!({ "file": in_file }))?;
             } else {
                 println!("Verification successful: {}", in_file.display());
             }
@@ -1304,7 +1303,7 @@ fn run() -> Result<(), CliError> {
             let failed = matches!(res.status, lvau_core::preflight::PreflightStatus::Fail);
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&res).unwrap());
+                output::print_success("preflight", &res)?;
             } else {
                 println!("Preflight Report for: {}", in_file.display());
                 println!("===========================================");
@@ -1414,7 +1413,7 @@ fn run() -> Result<(), CliError> {
             );
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                output::print_success("report", &report)?;
             } else {
                 println!("==================================================");
                 println!("             Lvau Verification Report             ");
@@ -1482,7 +1481,7 @@ fn run() -> Result<(), CliError> {
                         "violations": result.violations.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>(),
                         "warnings": result.warnings.iter().map(|v| serde_json::json!({ "rule": v.rule, "message": v.message })).collect::<Vec<_>>()
                     });
-                    println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+                    output::print_success("policy.lint", &json_val)?;
                 } else {
                     println!(
                         "Linting artifact {} against {}",
@@ -1683,7 +1682,7 @@ fn run() -> Result<(), CliError> {
                 let report = lvau_core::diff::diff_bundles(&old_file, old_pwd, &new_file, new_pwd)?;
 
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                    output::print_success("report", &report)?;
                 } else {
                     println!("Diff Report:");
                     println!("Old: {}", old_file.display());
