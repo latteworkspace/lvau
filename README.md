@@ -20,8 +20,10 @@ English | [日本語](README_ja.md)
 - authenticated decrypt and verify operations with machine-readable JSON output;
 - Ed25519 author signatures;
 - password-encrypted directory bundles with encrypted manifests;
-- local policy checks, preflight reports, recipient groups, recovery shares, and structured-secret commands;
+- advisory local policy checks and preflight reports, plus recipient groups, recovery shares, and structured-secret commands;
 - a native GUI that reuses `lvau-core` rather than reimplementing cryptography.
+
+Policy linting is experimental and advisory. It is not automatically enforced by `decrypt` or `bundle extract`; run `policy lint` or `preflight` as a separate workflow step when a local policy must pass before decryption or extraction.
 
 Hybrid recipient encryption, cascade profiles, approval metadata, recovery workflows, the GUI, and self-extracting archives remain experimental.
 
@@ -43,6 +45,8 @@ printf '%s' 'replace-with-a-strong-passphrase' > password.txt
 chmod 600 password.txt
 lvau-cli encrypt --in-file secret.txt --out-file secret.txt.lvau --password-file password.txt
 ```
+
+On Windows, restrict the password file's ACL to the account that runs Lvau. The CLI's broad-permission check is Unix-only, so it does not reject an overly permissive Windows ACL.
 
 Never commit passwords, private keys, seeds, recovery shares, or credential files.
 
